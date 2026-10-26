@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#00518F">
+  <meta name="description" content="Hệ thống điều hành Marketing An Châu V3">
+  <title>AN CHÂU • Marketing V3.0</title>
+  <link rel="stylesheet" href="./v3.css">
+</head>
+<body>
+  <div id="login" class="login">
+    <div class="login-card">
+      <div class="logo">AC</div>
+      <h1>AN CHÂU</h1>
+      <p>Marketing Control Center <b>V3.0</b></p>
+      <p>Đăng nhập bằng tài khoản Google được cấp quyền.</p>
+      <button class="btn primary block" id="sign-in">Đăng nhập bằng Google</button>
+      <p class="error" id="login-error" role="alert"></p>
+    </div>
+  </div>
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">AC</span><div><b>AN CHÂU</b><small>MARKETING V3.0</small></div></div>
+      <div id="roleLabel" class="role"></div>
+      <nav id="nav" aria-label="Điều hướng chính"></nav>
+      <div class="sidebar-foot">Dữ liệu Firebase · Phân quyền theo tài khoản Google</div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div><div class="eyebrow">AN CHÂU · MARKETING</div><h1 id="pageTitle">Tổng quan</h1></div>
+        <div class="top-controls">
+          <span id="userLabel" class="user-label"></span>
+          <button id="sign-out" class="btn ghost">Đăng xuất</button>
+        </div>
+      </header>
+      <main id="content" class="main" aria-live="polite"><p>Đang tải dữ liệu…</p></main>
+    </div>
+  </div>
+  <div id="modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-window">
+      <header class="modal-heading"><h2 id="modalTitle">Chi tiết</h2><button type="button" id="modalClose" class="btn ghost" aria-label="Đóng">✕</button></header>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="./firebase-config.js"></script>
+  <script type="module" src="./v3.js"></script>
+</body>
+</html>
