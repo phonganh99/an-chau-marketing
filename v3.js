@@ -179,3 +179,175 @@ function renderTasks() {
     <div class="card table-wrap"><table class="table"><thead><tr><th>Công việc</th><th>Nguồn</th><th>Kênh</th><th>Deadline</th><th>Trạng thái</th><th></th></tr></thead><tbody>
     ${filtered.map(t=>`<tr><td>${taskName(t)}<div class="tag">${safe(t.owner||ownerName())}</div></td><td>${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Kế hoạch":"Giám đốc giao")}</td><td>${safe(t.channel||"Nội bộ")}</td><td>${fmt(t.due)}</td><td>${pill(statusLabels[t.status]||"—",isLate(t)?"bad":t.status==="done"?"good":t.status==="review"?"warn":"")}</td><td>${btn("Mở","task",t.id)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("Chưa có công việc.")}</td></tr>`}</tbody></table></div>`;
 }
+
+function taskForm(t=null) {
+  const isEdit=!!t,own=!isEdit||manager()||(t.source==="self"&&t.createdBy===me.uid);
+  if(!own)return `<div class="notice warn">Bạn không được thay đổi brief do Giám đốc giao.</div>`;
+  const name=t?.title||"",owner=t?.owner||ownerName();
+  return `<form id="taskForm" data-task-id="${safe(t?.id||"")}" class="form-grid">
+    <div class="full">${field("title","Tên công việc *",name,"text",'required maxlength="160"')}</div>
+    ${manager()?field("owner","Người thực hiện *",owner,"text",'required maxlength="70"'):""}
+    ${select("category","Nhóm công việc",[["Content","Content"],["Video","Video"],["Design","Thiết kế"],["Ads","Ads"],["Website","Website"],["Khác","Khác"]],t?.category||"Content")}
+    ${select("channel","Kênh",channels.map(x=>[x,x]),t?.channel||"TikTok")}
+    ${select("priority","Ưu tiên",[["high","Cao"],["medium","Trung bình"],["low","Thấp"]],t?.priority||"medium")}
+    ${manager()?select("status","Trạng thái",Object.entries(statusLabels),t?.status||"todo"):""}
+    ${field("due","Deadline bàn giao *",t?.due||addDays(today(),2),"date","required")}
+    ${field("publish","Ngày dự kiến đăng",t?.publish||"","date")}
+    <div class="full">${txtarea("description","Brief / yêu cầu",t?.description||"")}</div>
+    <div class="full notice">Nội dung liên quan visa, chi phí, học phí, tuyển sinh, quảng cáo hoặc cam kết sẽ cần duyệt trước khi đăng. Nhân viên được tự tạo việc nhưng không được bỏ qua bước duyệt nội dung quan trọng.</div>
+    <div class="full button-row end"><button class="btn primary" type="submit">${isEdit?"Lưu thông tin":"Tạo công việc"}</button></div>
+  </form>`;
+}
+function openTaskForm(taskId="") {
+  const t=taskId?taskById(taskId):null;
+  if(taskId&&!t)return toast("Không tìm thấy công việc.");
+  if(t && !manager() && !(t.source==="self"&&t.createdBy===me.uid)) return toast("Không có quyền chỉnh brief công việc này.");
+  modal(t?"Chỉnh sửa công việc":manager()?"Giao việc mới":"Tự tạo công việc",taskForm(t));
+}
+async function saveTaskForm(form) {
+  const old=taskById(form.dataset.taskId);
+  if(old&&!manager()&&!(old.source==="self"&&old.createdBy===me.uid))return toast("Không đủ quyền chỉnh sửa.");
+  const val=(key)=>trim(form.elements[key]?.value||"");
+  const newTask={
+    title:val("title"),owner:manager()?val("owner"):ownerName(),category:val("category"),
+    channel:val("channel"),priority:val("priority"),due:val("due"),publish:val("publish"),
+    description:val("description"),updatedAt:iso(),updatedBy:me.uid
+  };
+  if(!newTask.title||!newTask.owner||!cleanDate(newTask.due))return toast("Vui lòng điền tên việc, người phụ trách và deadline.");
+  if(newTask.publish&&!cleanDate(newTask.publish))return toast("Ngày đăng không hợp lệ.");
+  if(manager()){
+    newTask.status=val("status")||"todo";
+    if(!statusLabels[newTask.status])return toast("Trạng thái không hợp lệ.");
+  }
+  if(!old){
+    newTask.createdAt=iso();newTask.createdBy=me.uid;newTask.source=manager()?"assigned":"self";
+    newTask.id=id("MK");newTask.status=newTask.status||"todo";
+    newTask.reviewRequired=needsReview(newTask);
+    newTask.approvalState=newTask.reviewRequired?"pending":"not_required";
+    newTask.producedAt="";newTask.publications=[];
+  }
+  const taskId=old?.id||newTask.id;
+  const ok=await doWrite(()=>old?updateDoc(doc(db,collectionNames.tasks,taskId),newTask):setDoc(doc(db,collectionNames.tasks,taskId),newTask),old?"Đã cập nhật công việc.":"Đã tạo công việc.");
+  if(ok){closeModal();await logAction(taskId,old?"task_updated":"task_created",newTask.title);}
+}
+function taskMessages(t) {
+  const messages=appData.messages.filter(m=>m.taskId===t.id).sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+  return `<section><h3>Trao đổi trong công việc</h3>
+   ${messages.length?messages.map(m=>`<div class="list-card"><strong>${safe(m.actorEmail)} · ${safe(m.kind==="question"?"Hỏi lại":m.kind==="reply"?"Trả lời":"Nhận xét")}</strong><p>${safe(m.content)}</p><small class="sub">${when(m.createdAt)}</small></div>`).join(""):empty("Chưa có trao đổi.")}
+   <form id="messageForm" data-task-id="${safe(t.id)}" class="stack">
+     ${select("kind","Loại phản hồi",manager()?[["reply","Trả lời nhân viên"],["feedback","Nhận xét"]]:[["question","Hỏi lại brief"],["feedback","Ghi chú"]])}
+     ${txtarea("content","Nội dung trao đổi")}
+     <div class="button-row end"><button class="btn" type="submit">Gửi phản hồi</button></div>
+   </form></section>`;
+}
+function openTaskDetail(key) {
+  const t=taskById(key);if(!t)return toast("Không tìm thấy công việc.");
+  const approved=t.approvalState==="approved"||t.approvalState==="not_required"||t.approvalState==="auto";
+  const production=!!t.producedAt;
+  const pubs=Array.isArray(t.publications)?t.publications:[];
+  const internal=t.category==="Khác"||t.channel==="Nội bộ";
+  let actions="";
+  if(t.status!=="cancelled"){
+    if(manager()){
+      actions+=btn("Sửa thông tin","edit-task",t.id);
+      if(t.status==="review")actions+=btn("Duyệt nội dung","approve-task",t.id,"primary")+btn("Yêu cầu sửa","revise-task",t.id,"danger");
+      if(t.status!=="done")actions+=btn("Ghi nhận hoàn thành","finish-task",t.id);
+      actions+=btn("Hủy / lưu lịch sử","cancel-task",t.id,"danger");
+      if(!t.reviewRequired) actions+=btn("Bật duyệt thủ công","require-review",t.id);
+    }else{
+      if(t.status==="todo"&&t.source!=="self"&&t.source!=="plan")actions+=btn("Nhận việc","accept-task",t.id,"primary");
+      else if(t.status==="todo")actions+=btn("Bắt đầu thực hiện","accept-task",t.id);
+      if(!production)actions+=btn("✓ Đã sản xuất","produced-task",t.id,"primary");
+      if(t.reviewRequired && t.approvalState!=="approved" && t.status!=="review")actions+=btn("Gửi duyệt nội dung","submit-review",t.id);
+      if(production && approved && channels.includes(t.channel))actions+=btn("＋ Đã đăng / Thêm link","publish-task",t.id);
+      if(internal && t.status!=="done")actions+=btn("Hoàn thành việc nội bộ","finish-task",t.id);
+      if(t.source==="self"&&t.createdBy===me.uid) actions+=btn("Sửa công việc","edit-task",t.id);
+    }
+  }
+  const milestones=`<div class="grid cols2"><div class="list-card"><strong>Sản xuất</strong><p>${production?"Đã ghi nhận: "+when(t.producedAt):"Chưa ghi nhận sản phẩm"}</p></div>
+  <div class="list-card"><strong>Phê duyệt nội dung</strong><p>${safe(t.approvalState==="approved"?"Đã duyệt":t.approvalState==="not_required"?"Không cần duyệt":t.status==="review"?"Đang chờ duyệt":t.status==="revision"?"Cần chỉnh sửa":"Chưa duyệt")}</p></div></div>`;
+  const publicationHtml=pubs.length?pubs.map(p=>`<div class="item-line"><div class="fill"><b>${safe(p.channel)} · ${when(p.publishedAt)}</b><small>${aLink(p.link)}</small></div></div>`).join(""):empty("Chưa ghi nhận lượt xuất bản.");
+  const history=appData.events.filter(e=>e.taskId===t.id).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,30);
+  const body=`<div class="stack">
+    <div class="button-row">${pill(statusLabels[t.status]||"—",t.status==="done"?"good":t.status==="review"?"warn":"")}${pill(t.source==="self"?"Tự tạo":t.source==="plan"?"Từ kế hoạch":"Giám đốc giao","neutral")}${pill(t.channel||"Nội bộ","neutral")}</div>
+    <div class="sub">Phụ trách: <b>${safe(t.owner||ownerName())}</b> · Hạn: <b>${fmt(t.due)}</b> · Lịch đăng: <b>${fmt(t.publish)}</b></div>
+    <div class="notice"><b>Brief:</b> ${safe(t.description||"Chưa có yêu cầu bổ sung.")}</div>
+    ${milestones}
+    <div class="button-row">${actions}</div>
+    <hr class="divider"><section><h3>Lượt xuất bản theo kênh</h3>${publicationHtml}</section>
+    <hr class="divider">${taskMessages(t)}
+    <hr class="divider"><section><h3>Nhật ký hoạt động</h3>${history.length?`<ol class="history">${history.map(e=>`<li>${safe(e.type)} · ${safe(e.actorEmail)} · ${when(e.createdAt)}<br>${safe(e.detail)}</li>`).join("")}</ol>`:empty("Chưa có nhật ký V3 cho công việc này.")}</section>
+  </div>`;
+  modal(t.title,body);
+}
+async function updateTaskAction(key,action) {
+  const t=taskById(key);if(!t)return toast("Không tìm thấy công việc.");
+  if(t.status==="cancelled")return toast("Công việc đã hủy.");
+  const stamp=iso();const common={updatedAt:stamp,updatedBy:me.uid};
+  let changes=null,reason="";
+  switch(action){
+    case "accept-task":
+      if(manager())return;changes={...common,status:"doing"};break;
+    case "produced-task":
+      if(manager()||t.producedAt)return;
+      changes={...common,producedAt:stamp,status:t.status==="review"?"review":"doing"};break;
+    case "submit-review":
+      if(manager()||!t.reviewRequired)return;
+      changes={...common,approvalState:"pending",status:"review"};break;
+    case "approve-task":
+      if(!manager()||t.status!=="review")return;
+      changes={...common,approvalState:"approved",status:"doing",approvedAt:stamp,approvedBy:me.uid};break;
+    case "revise-task":
+      if(!manager())return;
+      reason=prompt("Nội dung nhân viên cần sửa (bắt buộc):")||"";
+      if(!reason.trim())return;changes={...common,status:"revision",approvalState:"pending",feedback:trim(reason)};break;
+    case "require-review":
+      if(!manager())return;changes={...common,reviewRequired:true,approvalState:"pending"};break;
+    case "finish-task":
+      if(!manager() && !((t.category==="Khác"||t.channel==="Nội bộ")&&staff()))return;
+      changes={...common,status:"done",completedAt:stamp};break;
+    case "cancel-task":
+      if(!manager())return;
+      reason=prompt("Nhập lý do hủy công việc (bắt buộc):")||"";
+      if(!reason.trim())return;changes={...common,status:"cancelled",cancelReason:trim(reason)};break;
+    default:return;
+  }
+  if(!changes)return;
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.tasks,key),changes));
+  if(ok){await logAction(key,action,reason);closeModal();}
+}
+function openPublishForm(t) {
+  if(!t.producedAt)return toast("Cần ghi nhận hoàn thành sản xuất trước.");
+  if(t.reviewRequired&&t.approvalState!=="approved")return toast("Nội dung này phải được Giám đốc duyệt trước khi đăng.");
+  const already=new Set((t.publications||[]).map(x=>x.channel));
+  const available=channels.filter(ch=>!already.has(ch));
+  if(!available.length)return toast("Đã ghi nhận xuất bản cho tất cả kênh.");
+  modal("Ghi nhận đã đăng · "+t.title,`<form id="publishForm" data-task-id="${safe(t.id)}" class="stack">
+    ${select("channel","Kênh đã đăng",available.map(x=>[x,x]),t.channel)}
+    ${field("link","Link bài đăng", "","url",'required placeholder="https://..."')}
+    <div class="notice">Mỗi công việc chỉ ghi nhận một lượt xuất bản trên mỗi kênh. Hệ thống đếm theo ngày xác nhận thực tế; không duyệt KPI thêm lần nữa.</div>
+    <div class="button-row end"><button type="submit" class="btn primary">Ghi nhận xuất bản</button></div></form>`);
+}
+async function submitPublish(form) {
+  const t=taskById(form.dataset.taskId);if(!t)return;
+  const channel=trim(form.elements.channel.value),link=trim(form.elements.link.value,1000);
+  if(!channels.includes(channel)||!validUrl(link))return toast("Chọn đúng kênh và nhập link http(s) hợp lệ.");
+  if(!t.producedAt||(t.reviewRequired&&t.approvalState!=="approved"))return toast("Sản phẩm chưa đủ điều kiện xuất bản.");
+  const pubs=Array.isArray(t.publications)?t.publications:[];
+  if(pubs.some(p=>p.channel===channel))return toast("Kênh này đã được ghi nhận, không cộng trùng KPI.");
+  const stamp=iso();
+  const updated=[...pubs,{id:id("PUB"),channel,link,publishedAt:stamp}];
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.tasks,t.id),{publications:updated,publishedAt:stamp,link,updatedBy:me.uid,updatedAt:stamp,status:"done"}),"Đã ghi nhận KPI xuất bản.");
+  if(ok){closeModal();await logAction(t.id,"published",channel+" · "+link);}
+}
+async function submitMessage(form) {
+  const taskId=form.dataset.taskId,content=trim(form.elements.content.value);
+  const kind=trim(form.elements.kind.value);
+  if(!content)return toast("Nhập nội dung trao đổi.");
+  if(!taskById(taskId))return toast("Công việc không còn tồn tại.");
+  if(manager()&&!["reply","feedback"].includes(kind))return toast("Loại phản hồi không hợp lệ.");
+  if(staff()&&!["question","feedback"].includes(kind))return toast("Loại phản hồi không hợp lệ.");
+  const m={taskId,actorUid:me.uid,actorEmail:me.email,kind,content,createdAt:iso()};
+  const ok=await doWrite(()=>setDoc(doc(db,collectionNames.messages,id("MSG")),m),"Đã gửi trao đổi.");
+  if(ok){await logAction(taskId,"message",kind);closeModal();}
+}
