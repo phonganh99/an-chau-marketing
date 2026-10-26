@@ -43,7 +43,10 @@ service cloud.firestore {
         || resource.data.get('reviewRequired',false) == false;
       return request.resource.data.updatedBy == request.auth.uid
         && resource.data.get('status','') != 'cancelled'
-        && resource.data.get('status','') != 'done'
+        && (resource.data.get('status','') != 'done'
+            || (publishing
+                && request.resource.data.status == 'done'
+                && changing.hasOnly(['publications','publishedAt','link','status','updatedAt','updatedBy'])))
         && (changing.hasOnly(safeCommon)
              || (ownsTask && changing.hasOnly(safeCommon.concat(selfOnly))))
         && request.resource.data.get('source','assigned') == resource.data.get('source','assigned')
@@ -55,7 +58,7 @@ service cloud.firestore {
              || resource.data.get('category','') == 'Khác'
              || resource.data.get('channel','') == 'Nội bộ'
              || publishing)
-        && (!publishing || approved)
+        && (!publishing || (approved && pubsNew.size() == pubsOld.size() + 1))
         && pubsNew is list;
     }
 
