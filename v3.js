@@ -185,11 +185,15 @@ function taskForm(t=null) {
   const isEdit=!!t,own=!isEdit||manager()||(t.source==="self"&&t.createdBy===me.uid);
   if(!own)return `<div class="notice warn">Bạn không được thay đổi brief do Giám đốc giao.</div>`;
   const name=t?.title||"",owner=t?.owner||ownerName();
+  const categories=["Content","Video","Design","Ads","Website","Khác"];
+  if(t?.category&&!categories.includes(t.category))categories.push(t.category);
+  const allowedChannels=[...channels];
+  if(t?.channel&&!allowedChannels.includes(t.channel))allowedChannels.push(t.channel);
   return `<form id="taskForm" data-task-id="${safe(t?.id||"")}" class="form-grid">
     <div class="full">${field("title","Tên công việc *",name,"text",'required maxlength="160"')}</div>
     ${manager()?field("owner","Người thực hiện *",owner,"text",'required maxlength="70"'):""}
-    ${select("category","Nhóm công việc",[["Content","Content"],["Video","Video"],["Design","Thiết kế"],["Ads","Ads"],["Website","Website"],["Khác","Khác"]],t?.category||"Content")}
-    ${select("channel","Kênh",channels.map(x=>[x,x]),t?.channel||"TikTok")}
+    ${select("category","Nhóm công việc",categories.map(x=>[x,x]),t?.category||"Content")}
+    ${select("channel","Kênh",allowedChannels.map(x=>[x,x]),t?.channel||"TikTok")}
     ${select("priority","Ưu tiên",[["high","Cao"],["medium","Trung bình"],["low","Thấp"]],t?.priority||"medium")}
     ${manager()?select("status","Trạng thái",Object.entries(statusLabels),t?.status||"todo"):""}
     ${field("due","Deadline bàn giao *",t?.due||addDays(today(),2),"date","required")}
@@ -426,16 +430,17 @@ async function addPlanItem(form) {
   if(items.length>=100)return toast("Giới hạn 100 nội dung mỗi kế hoạch.");
   const item={id:id("IT"),title,channel,category:trim(form.elements.category.value),description:trim(form.elements.description.value),due,publish,weekday:recurring?Number(form.elements.weekday.value):null};
   const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,p.id),{items:[...items,item],version:(p.version||1)+1,updatedAt:iso()}),"Đã thêm nội dung vào kế hoạch.");
-  if(ok)closeModal();
+  if(ok){await logAction(p.id,"plan_item_added",item.title);closeModal();}
 }
 async function removePlanItem(key) {
   const [planId,itemId]=key.split("|");
   const p=appData.plans.find(x=>x.id===planId);
   if(!p||!staff()||p.ownerUid!==me.uid)return;
   if(!confirm("Bỏ dòng này khỏi kế hoạch? Công việc đã sinh sẽ không tự bị xóa."))return;
+  const removed=(p.items||[]).find(x=>x.id===itemId);
   const items=(p.items||[]).filter(x=>x.id!==itemId);
   const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,planId),{items,version:(p.version||1)+1,updatedAt:iso()}));
-  if(ok)closeModal();
+  if(ok){await logAction(p.id,"plan_item_removed",removed?.title||itemId);closeModal();}
 }
 function planToTask(p,item,uniqueId,due,publish) {
   const stub={id:uniqueId,title:item.title,description:item.description||"",category:item.category||"Content"};
@@ -493,6 +498,7 @@ async function activatePlan(planId) {
     try {
       const n=await generatePlan({...p,active:true});
       await generateRecurring();
+      await logAction(p.id,"plan_activated","Tạo mới "+n+" công việc");
       toast("Đã kích hoạt kế hoạch, tạo mới "+n+" công việc. Việc cũ không bị tạo trùng.");
     }catch(e){toast("Đã kích hoạt, nhưng tạo việc có lỗi: "+errorText(e));}
     closeModal();
@@ -502,7 +508,7 @@ async function pausePlan(key) {
   const p=appData.plans.find(x=>x.id===key);
   if(!p||(!manager()&&p.ownerUid!==me.uid))return;
   const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,key),{active:false,updatedAt:iso()}),"Đã tạm dừng kế hoạch. Những việc đã tạo vẫn giữ nguyên.");
-  if(ok)closeModal();
+  if(ok){await logAction(p.id,"plan_paused","Kế hoạch đã tạm dừng");closeModal();}
 }
 function renderCalendar() {
   const [year,month]=ui.month.split("-").map(Number);
@@ -551,7 +557,7 @@ async function saveSchedule(form) {
   if(mode!=="off"&&(!/^\d\d:\d\d$/.test(start)||!/^\d\d:\d\d$/.test(end)||end<=start))return toast("Giờ làm việc không hợp lệ.");
   const data={ownerUid:me.uid,ownerEmail:me.email,date,mode,start:mode==="off"?"":start,end:mode==="off"?"":end,note:trim(form.elements.note.value),updatedAt:iso()};
   const ok=await doWrite(()=>setDoc(doc(db,collectionNames.schedules,me.uid+"_"+date),data),"Đã lưu lịch đi làm.");
-  if(ok)closeModal();
+  if(ok){await logAction("schedule:"+date,"schedule_saved",mode+" "+start+"-"+end);closeModal();}
 }
 
 function targetForWeek(start) {
