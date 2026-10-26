@@ -650,3 +650,124 @@ async function saveTargets(form) {
   const payload={targets,history:[...history,{fromWeek,targets,updatedBy:me.uid,updatedAt:iso()}].sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek)),updatedAt:iso(),updatedBy:me.uid};
   await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI theo kênh.");
 }
+
+async function handleAction(action,key) {
+  if(action==="go")return go(key);
+  if(action==="task")return openTaskDetail(key);
+  if(action==="new-task")return openTaskForm();
+  if(action==="edit-task"){closeModal();return openTaskForm(key);}
+  if(action==="clear-filter"){ui.filter="";return render();}
+  if(action==="new-plan")return openPlanNew();
+  if(action==="plan")return openPlanDetail(key);
+  if(action==="remove-plan-item")return removePlanItem(key);
+  if(action==="activate-plan")return activatePlan(key);
+  if(action==="pause-plan")return pausePlan(key);
+  if(action==="schedule")return openSchedule(key||today());
+  if(action==="publish-task")return openPublishForm(taskById(key));
+  if(action==="weekly-note")return openWeeklyNote(key);
+  if(action==="weekly-confirm")return openWeeklyConfirm(key);
+  if(action==="cal-prev"||action==="cal-next") {
+    const [y,m]=ui.month.split("-").map(Number);
+    ui.month=today(new Date(y,m-1+(action==="cal-next"?1:-1),1)).slice(0,7);
+    return render();
+  }
+  if(action==="cal-today"){ui.month=today().slice(0,7);return render();}
+  if(action==="week-prev"){ui.week=addDays(ui.week,-7);return render();}
+  if(action==="week-next"){ui.week=addDays(ui.week,7);return render();}
+  if(action==="week-now"){ui.week=nowWeek();return render();}
+  if(["accept-task","produced-task","submit-review","approve-task","revise-task","require-review","finish-task","cancel-task"].includes(action))return updateTaskAction(key,action);
+}
+document.addEventListener("click",async e=>{
+  const actionEl=e.target.closest("[data-action]");
+  if(!actionEl||!me)return;
+  e.preventDefault();
+  const action=actionEl.dataset.action,key=actionEl.dataset.id||"";
+  actionEl.disabled=true;
+  try{await handleAction(action,key);}catch(err){toast("Lỗi thao tác: "+errorText(err));console.error(err);}
+  finally{if(actionEl.isConnected)actionEl.disabled=false;}
+});
+document.addEventListener("input",e=>{
+  if(e.target.id==="searchTask"&&me) {
+    ui.filter=e.target.value;
+    const position=e.target.selectionStart;
+    render();
+    const next=$("searchTask");
+    if(next){next.focus();next.setSelectionRange(position,position);}
+  }
+});
+document.addEventListener("change",e=>{
+  if(e.target.dataset.layer){
+    ui.layers[e.target.dataset.layer]=!!e.target.checked;
+    render();
+  }
+});
+document.addEventListener("submit",async e=>{
+  if(!me)return;
+  const form=e.target;
+  if(!["taskForm","publishForm","messageForm","planForm","planItemForm","scheduleForm","weeklyNoteForm","weeklyConfirmForm","kpiSettingsForm"].includes(form.id))return;
+  e.preventDefault();
+  const submit=form.querySelector('[type="submit"]');
+  if(submit)submit.disabled=true;
+  try{
+    const handles={
+      taskForm:saveTaskForm,publishForm:submitPublish,messageForm:submitMessage,
+      planForm:savePlanForm,planItemForm:addPlanItem,scheduleForm:saveSchedule,
+      weeklyNoteForm:saveWeeklyNote,weeklyConfirmForm:confirmWeekly,kpiSettingsForm:saveTargets
+    };
+    await handles[form.id](form);
+  }catch(err){toast("Lỗi lưu biểu mẫu: "+errorText(err));console.error(err);}
+  finally{if(submit?.isConnected)submit.disabled=false;}
+});
+$("modalClose").addEventListener("click",closeModal);
+$("modal").addEventListener("click",e=>{if(e.target===$("modal"))closeModal();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal();});
+
+function initFirebase(){
+  const required=[CONFIG.apiKey,CONFIG.authDomain,CONFIG.projectId,CONFIG.appId,CONFIG.managerEmail,CONFIG.staffEmail];
+  if(!required.every(x=>typeof x==="string"&&x&&!x.includes("THAY_"))) {
+    $("login-error").textContent="Chưa cấu hình Firebase cho An Châu.";
+    $("sign-in").disabled=true;
+    return;
+  }
+  const fbApp=initializeApp({
+    apiKey:CONFIG.apiKey,authDomain:CONFIG.authDomain,projectId:CONFIG.projectId,
+    appId:CONFIG.appId,messagingSenderId:CONFIG.messagingSenderId||""
+  });
+  auth=getAuth(fbApp);
+  db=getFirestore(fbApp);
+  const provider=new GoogleAuthProvider();
+  $("sign-in").addEventListener("click",async()=>{
+    $("sign-in").disabled=true;$("login-error").textContent="";
+    try{await signInWithPopup(auth,provider);}
+    catch(e){$("login-error").textContent=errorText(e);}
+    finally{$("sign-in").disabled=false;}
+  });
+  $("sign-out").addEventListener("click",async()=>{
+    try{await signOut(auth);}
+    catch(e){toast(errorText(e));}
+  });
+  onAuthStateChanged(auth,async user=>{
+    unsubscribeAll();
+    if(!user){
+      me=null;role=null;
+      for(const key of Object.keys(appData))appData[key]=key==="kpi"?null:[];
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      closeModal();return;
+    }
+    const email=trim(user.email).toLowerCase();
+    if(!user.emailVerified||![managerEmail,staffEmail].includes(email)){
+      $("login-error").textContent="Email này chưa được cấp quyền truy cập.";
+      await signOut(auth);return;
+    }
+    me=user;role=email===managerEmail?"manager":"staff";
+    $("app").classList.remove("hidden");
+    $("login").classList.add("hidden");
+    $("userLabel").textContent=(manager()?"Giám đốc":"Nhân viên")+" · "+email;
+    ui.view="dashboard";ui.week=nowWeek();
+    render();
+    subscriptions();
+  });
+  setInterval(()=>{if(me)generateRecurring().catch(e=>console.warn(e));},30*60*1000);
+}
+initFirebase();
