@@ -32,7 +32,7 @@ service cloud.firestore {
         'updatedAt','updatedBy','approvalState','completedAt'
       ];
       let selfOnly = [
-        'title','owner','category','channel','priority','due','publish','description'
+        'title','owner','category','channel','priority','due','publish','description','reviewRequired'
       ];
       let ownsTask = resource.data.get('createdBy','') == request.auth.uid
         && resource.data.get('source','') == 'self';
@@ -51,6 +51,8 @@ service cloud.firestore {
              || (ownsTask && changing.hasOnly(safeCommon.concat(selfOnly))))
         && request.resource.data.get('source','assigned') == resource.data.get('source','assigned')
         && request.resource.data.get('createdBy','') == resource.data.get('createdBy','')
+        && (request.resource.data.get('reviewRequired',false) == resource.data.get('reviewRequired',false)
+             || (ownsTask && request.resource.data.get('reviewRequired',false) == true))
         && (request.resource.data.get('approvalState','') == resource.data.get('approvalState','')
              || request.resource.data.get('approvalState','') == 'pending')
         && request.resource.data.status in ['todo','doing','review','done']
