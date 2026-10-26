@@ -415,6 +415,7 @@ function openPlanDetail(key) {
       </form></section>
       <div class="button-row">${btn(p.active?"Đồng bộ việc mới":"Kích hoạt & tự sinh việc","activate-plan",p.id,"primary")}${p.active?btn("Tạm dừng kế hoạch","pause-plan",p.id):""}</div>
       <div class="notice warn">Thay đổi nội dung sau khi đã kích hoạt không xóa hoặc ghi đè các công việc đã sinh. Dòng mới sẽ tạo thêm công việc khi đồng bộ.</div>`:""}
+   <section><h3>Lịch sử thay đổi kế hoạch</h3>${appData.events.filter(e=>e.taskId===p.id).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,20).map(e=>`<div class="tag">${when(e.createdAt)} · ${safe(e.type)} · ${safe(e.detail)}</div>`).join("")||empty("Chưa có sự kiện V3.")}</section>
    </div>`);
 }
 async function addPlanItem(form) {
