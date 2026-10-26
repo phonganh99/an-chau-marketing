@@ -23,6 +23,7 @@ const weekStart = (s=today()) => { const d=dateFrom(s);d.setDate(d.getDate()-((d
 const fmt = (s) => s ? dateFrom(s).toLocaleDateString("vi-VN") : "—";
 const when = (s) => s ? new Date(s).toLocaleString("vi-VN",{dateStyle:"short",timeStyle:"short"}) : "—";
 const iso = () => new Date().toISOString();
+const vietnamDay = (stamp) => { if(!stamp)return ""; const d=new Date(stamp); if(Number.isNaN(d.getTime()))return ""; const parts=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(d).map(p=>[p.type,p.value]));return parts.year+"-"+parts.month+"-"+parts.day; };
 const trim = (v,max=2000) => String(v??"").trim().slice(0,max);
 const cleanDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : "";
 const errorText = (e) => ({
@@ -122,8 +123,8 @@ function weekTasks(start=nowWeek()) {
 function weekStats(start=ui.week) {
   const end=addDays(start,7);
   const all=appData.tasks.filter(t=>t.status!=="cancelled");
-  const produced = all.filter(t=>t.producedAt && t.producedAt.slice(0,10)>=start && t.producedAt.slice(0,10)<end);
-  const pubs = all.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt && p.publishedAt.slice(0,10)>=start && p.publishedAt.slice(0,10)<end);
+  const produced = all.filter(t=>t.producedAt && vietnamDay(t.producedAt)>=start && vietnamDay(t.producedAt)<end);
+  const pubs = all.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt && vietnamDay(p.publishedAt)>=start && vietnamDay(p.publishedAt)<end);
   const targets = targetForWeek(start);
   return channels.map(channel => {
     const p=produced.filter(t=>t.channel===channel).length;
@@ -225,6 +226,10 @@ async function saveTaskForm(form) {
     newTask.reviewRequired=needsReview(newTask);
     newTask.approvalState=newTask.reviewRequired?"pending":"not_required";
     newTask.producedAt="";newTask.publications=[];
+  }
+  if(old){
+    const changedCore=old.title!==newTask.title||old.description!==newTask.description||old.category!==newTask.category||old.channel!==newTask.channel;
+    if(changedCore&&needsReview({...old,...newTask})){newTask.reviewRequired=true;newTask.approvalState="pending";}
   }
   const taskId=old?.id||newTask.id;
   const ok=await doWrite(()=>old?updateDoc(doc(db,collectionNames.tasks,taskId),newTask):setDoc(doc(db,collectionNames.tasks,taskId),newTask),old?"Đã cập nhật công việc.":"Đã tạo công việc.");
@@ -634,6 +639,7 @@ function renderSettings() {
       </tbody></table></div><div class="button-row end"><button type="submit" class="btn primary">Lưu KPI tối thiểu</button></div></form>
     </section>
     <section class="card"><h2>Quy tắc duyệt nội dung</h2><p class="sub">Tự nhận diện các nội dung nhạy cảm liên quan visa, học phí, chi phí, tuyển sinh, cam kết hoặc quảng cáo. Giám đốc có quyền bật duyệt thủ công trên bất kỳ công việc nào. Nội dung không thuộc nhóm này không cần duyệt trước khi ghi nhận đã đăng.</p><div class="notice warn">Đây là bộ lọc từ khóa cơ bản, không thay thế kiểm tra pháp lý hoặc kiểm duyệt nội dung. Nhân viên không thể tự xác nhận “Đã duyệt”.</div></section>
+    <section class="card"><h2>Sao lưu dữ liệu</h2><p class="sub">Tải dữ liệu hiện có để có bản dự phòng trước khi chuyển phiên bản.</p><div class="button-row">${btn("↓ Sao lưu JSON","backup-json")}${btn("↓ Xuất CSV công việc","backup-csv")}</div></section>
     <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, hai người chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
   </div>`;
 }
@@ -651,6 +657,24 @@ async function saveTargets(form) {
   await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI theo kênh.");
 }
 
+function downloadData(data,name,type){
+  const blob=new Blob([data],{type}),url=URL.createObjectURL(blob),link=document.createElement("a");
+  link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+function backupJson(){
+  if(!manager())return;
+  const json=JSON.stringify({app:"An Châu Marketing V3",exportedAt:iso(),...appData},null,2);
+  downloadData(json,"an-chau-marketing-v3-"+today()+".json","application/json");
+}
+function backupCsv(){
+  if(!manager())return;
+  const cols=["id","title","owner","source","channel","category","status","due","publish","producedAt","publishedAt","link"];
+  const lines=[cols,...appData.tasks.map(t=>cols.map(k=>t[k]||""))];
+  const csv="\uFEFF"+lines.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");
+  downloadData(csv,"an-chau-marketing-v3-"+today()+".csv","text/csv;charset=utf-8");
+}
+
 async function handleAction(action,key) {
   if(action==="go")return go(key);
   if(action==="task")return openTaskDetail(key);
@@ -663,6 +687,8 @@ async function handleAction(action,key) {
   if(action==="activate-plan")return activatePlan(key);
   if(action==="pause-plan")return pausePlan(key);
   if(action==="schedule")return openSchedule(key||today());
+  if(action==="backup-json")return backupJson();
+  if(action==="backup-csv")return backupCsv();
   if(action==="publish-task")return openPublishForm(taskById(key));
   if(action==="weekly-note")return openWeeklyNote(key);
   if(action==="weekly-confirm")return openWeeklyConfirm(key);
@@ -696,6 +722,10 @@ document.addEventListener("input",e=>{
   }
 });
 document.addEventListener("change",e=>{
+  if(e.target.name==="type"&&e.target.closest("#planForm")){
+    const form=e.target.form;
+    form.elements.end.value=e.target.value==="recurring"?addDays(form.elements.start.value||today(),365):addDays(form.elements.start.value||today(),6);
+  }
   if(e.target.dataset.layer){
     ui.layers[e.target.dataset.layer]=!!e.target.checked;
     render();
