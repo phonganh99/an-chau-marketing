@@ -563,7 +563,7 @@ async function saveSchedule(form) {
 function targetForWeek(start) {
   const history=appData.kpi?.history||[];
   const prior=history.filter(h=>h.fromWeek<=start).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
-  return prior.length?prior[prior.length-1].targets:appData.kpi?.targets||{};
+  return prior.length?prior[prior.length-1].targets:history.length?{}:appData.kpi?.targets||{};
 }
 function kpiWeekView() {
   return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div></div>`;
