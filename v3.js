@@ -124,7 +124,7 @@ function weekStats(start=ui.week) {
   const all=appData.tasks.filter(t=>t.status!=="cancelled");
   const produced = all.filter(t=>t.producedAt && t.producedAt.slice(0,10)>=start && t.producedAt.slice(0,10)<end);
   const pubs = all.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt && p.publishedAt.slice(0,10)>=start && p.publishedAt.slice(0,10)<end);
-  const targets = appData.kpi?.targets || {};
+  const targets = targetForWeek(start);
   return channels.map(channel => {
     const p=produced.filter(t=>t.channel===channel).length;
     const x=pubs.filter(pub=>pub.channel===channel).length;
@@ -547,4 +547,106 @@ async function saveSchedule(form) {
   const data={ownerUid:me.uid,ownerEmail:me.email,date,mode,start:mode==="off"?"":start,end:mode==="off"?"":end,note:trim(form.elements.note.value),updatedAt:iso()};
   const ok=await doWrite(()=>setDoc(doc(db,collectionNames.schedules,me.uid+"_"+date),data),"Đã lưu lịch đi làm.");
   if(ok)closeModal();
+}
+
+function targetForWeek(start) {
+  const history=appData.kpi?.history||[];
+  const prior=history.filter(h=>h.fromWeek<=start).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
+  return prior.length?prior[prior.length-1].targets:appData.kpi?.targets||{};
+}
+function kpiWeekView() {
+  return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div></div>`;
+}
+function reportId(start) {return "WR-"+start;}
+function weeklyReport(start) {return appData.reports.find(r=>r.id===reportId(start));}
+function employeeNote(start) {return appData.notes.find(n=>n.id===start+"_"+(staff()?me.uid:n.ownerUid));}
+function renderKpi() {
+  const stats=weekStats(ui.week),report=weeklyReport(ui.week),latest=(report?.versions||[]).slice(-1)[0];
+  const current=JSON.stringify(stats);
+  const changed=latest && JSON.stringify(latest.metrics)!==current;
+  const note=appData.notes.find(n=>n.week===ui.week);
+  const metrics=appData.tasks.filter(t=>t.status!=="cancelled"&&t.due>=ui.week&&t.due<addDays(ui.week,7));
+  return `<div class="stack">${kpiWeekView()}
+    <div class="grid cols3">${stats.map(kpiCard).join("")}</div>
+    <section class="card"><div class="section-head"><h2>Tổng hợp công việc theo tuần</h2>${pill(metrics.length+" việc có deadline")}</div>
+      <div class="grid cols3">${metric("Hoàn thành",metrics.filter(t=>t.status==="done").length,"Theo deadline tuần")}${metric("Chưa hoàn thành",metrics.filter(t=>t.status!=="done").length,"Cần theo dõi")}${metric("Chờ duyệt",metrics.filter(t=>t.status==="review").length,"Chưa phản ánh KPI xuất bản")}</div>
+    </section>
+    <section class="card"><div class="section-head"><h2>Báo cáo & nhận xét</h2>${pill(latest?"Đã chốt V"+report.versions.length:"Chưa chốt",latest?"good":"warn")}</div>
+     ${changed?`<div class="notice warn">Dữ liệu KPI đã thay đổi so với bản báo cáo chốt gần nhất. Giám đốc có thể lưu phiên bản điều chỉnh mới.</div>`:""}
+     <div class="list-card"><strong>Nhân viên giải trình</strong><p>${safe(note?.explanation||"Chưa nhập nội dung tổng kết tuần.")}</p><p>${safe(note?.proposal||"")}</p></div>
+     ${staff()?btn("Viết / sửa giải trình tuần","weekly-note",ui.week):""}
+     ${latest?`<div class="list-card"><strong>Đánh giá của Giám đốc – Bản ${report.versions.length}</strong><p>${safe(latest.managerComment||"Không có nhận xét bổ sung.")}</p><p>Xác nhận ${when(latest.confirmedAt)}</p></div>`:""}
+     ${manager()?btn(latest?"Xem & chốt bản điều chỉnh":"Xác nhận báo cáo tuần","weekly-confirm",ui.week,"primary"):""}
+     ${latest?`<details><summary class="small click">Lịch sử các phiên bản (${report.versions.length})</summary><div class="stack">${report.versions.map((v,i)=>`<div class="list-card"><b>V${i+1} – ${when(v.confirmedAt)}</b><p>${safe(v.reason||"Báo cáo tuần")}</p><p>${safe(v.managerComment||"")}</p></div>`).join("")}</div></details>`:""}
+    </section>
+    <div class="notice">Sản xuất tính theo ngày nhân viên xác nhận hoàn thành; xuất bản tính theo ngày nhập link đăng. Một sản phẩm chỉ được tính sản xuất một lần và mỗi kênh xuất bản một lần.</div>
+  </div>`;
+}
+function openWeeklyNote(week) {
+  if(!staff())return;
+  const n=appData.notes.find(x=>x.id===week+"_"+me.uid);
+  modal("Giải trình KPI · "+fmt(week),`<form id="weeklyNoteForm" data-week="${safe(week)}" class="stack">
+  ${txtarea("explanation","Công việc chưa đạt, nguyên nhân",n?.explanation||"")}
+  ${txtarea("proposal","Khó khăn và đề xuất cải thiện",n?.proposal||"")}
+  <div class="button-row end"><button class="btn primary" type="submit">Lưu giải trình</button></div></form>`);
+}
+async function saveWeeklyNote(form) {
+  if(!staff())return;
+  const week=form.dataset.week;
+  const note={week,ownerUid:me.uid,ownerEmail:me.email,explanation:trim(form.elements.explanation.value,4000),proposal:trim(form.elements.proposal.value,4000),updatedAt:iso()};
+  const ok=await doWrite(()=>setDoc(doc(db,collectionNames.notes,week+"_"+me.uid),note),"Đã lưu giải trình tuần.");
+  if(ok)closeModal();
+}
+function openWeeklyConfirm(week) {
+  if(!manager())return;
+  const report=weeklyReport(week),latest=(report?.versions||[]).slice(-1)[0];
+  const changed=latest&&JSON.stringify(latest.metrics)!==JSON.stringify(weekStats(week));
+  modal(latest?"Xác nhận điều chỉnh báo cáo":"Xác nhận báo cáo KPI",`<form id="weeklyConfirmForm" data-week="${safe(week)}" class="stack">
+    <div class="notice ${changed?"warn":""}">Kỳ ${fmt(week)}–${fmt(addDays(week,6))}. ${latest?changed?"Có thay đổi số liệu so với bản chốt trước.":"Số liệu chưa thay đổi; chỉ chốt bản mới khi có lý do.":"Chưa có bản chốt."}</div>
+    ${txtarea("managerComment","Nhận xét của Giám đốc",latest?.managerComment||"")}
+    ${txtarea("reason","Lý do xác nhận / điều chỉnh",latest?"":"Chốt đánh giá tuần")}
+    <div class="button-row end"><button class="btn primary" type="submit">Xác nhận lưu phiên bản</button></div></form>`);
+}
+async function confirmWeekly(form) {
+  if(!manager())return;
+  const week=form.dataset.week;
+  const ref=doc(db,collectionNames.reports,reportId(week));
+  const reason=trim(form.elements.reason.value,1200);
+  if(!reason)return toast("Vui lòng nhập lý do để lưu lịch sử.");
+  const metrics=weekStats(week);
+  const report=weeklyReport(week),old=report?.versions||[];
+  if(old.length>=50)return toast("Báo cáo đã có quá nhiều phiên bản. Cần lưu trữ phiên bản cũ.");
+  const version={metrics,reason,managerComment:trim(form.elements.managerComment.value,4000),confirmedAt:iso(),confirmedBy:me.uid};
+  const payload={week,versions:[...old,version],updatedAt:iso(),updatedBy:me.uid};
+  const ok=await doWrite(()=>setDoc(ref,payload),"Đã chốt báo cáo phiên bản V"+(old.length+1)+".");
+  if(ok)closeModal();
+}
+function renderSettings() {
+  if(!manager())return empty("Không đủ quyền truy cập.");
+  const targets=targetForWeek(nowWeek());
+  return `<div class="stack">
+    <section class="card"><div class="section-head"><h2>Thiết lập KPI tối thiểu theo tuần</h2>${pill("Giám đốc quản lý")}</div>
+      <p class="sub">KPI theo từng kênh, tách số sản phẩm sản xuất và số lượt xuất bản. Chỉ tiêu mới áp dụng từ tuần hiện tại và không làm thay đổi KPI lịch sử.</p>
+      <form id="kpiSettingsForm" class="stack">
+      <div class="table-wrap"><table class="table"><thead><tr><th>Kênh</th><th>Sản xuất / tuần</th><th>Xuất bản / tuần</th></tr></thead><tbody>
+      ${channels.map(c=>`<tr><td><b>${c}</b></td><td><div class="field"><input name="${c}_produce" aria-label="${c} sản xuất" type="number" min="0" max="999" value="${Number(targets[c]?.produce)||0}"></div></td>
+        <td><div class="field"><input name="${c}_publish" aria-label="${c} xuất bản" type="number" min="0" max="999" value="${Number(targets[c]?.publish)||0}"></div></td></tr>`).join("")}
+      </tbody></table></div><div class="button-row end"><button type="submit" class="btn primary">Lưu KPI tối thiểu</button></div></form>
+    </section>
+    <section class="card"><h2>Quy tắc duyệt nội dung</h2><p class="sub">Tự nhận diện các nội dung nhạy cảm liên quan visa, học phí, chi phí, tuyển sinh, cam kết hoặc quảng cáo. Giám đốc có quyền bật duyệt thủ công trên bất kỳ công việc nào. Nội dung không thuộc nhóm này không cần duyệt trước khi ghi nhận đã đăng.</p><div class="notice warn">Đây là bộ lọc từ khóa cơ bản, không thay thế kiểm tra pháp lý hoặc kiểm duyệt nội dung. Nhân viên không thể tự xác nhận “Đã duyệt”.</div></section>
+    <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, hai người chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
+  </div>`;
+}
+async function saveTargets(form) {
+  if(!manager())return;
+  const targets={};
+  for(const channel of channels) {
+    const produce=Number(form.elements[channel+"_produce"].value),publish=Number(form.elements[channel+"_publish"].value);
+    if(!Number.isInteger(produce)||produce<0||produce>999||!Number.isInteger(publish)||publish<0||publish>999)return toast("KPI phải là số nguyên trong khoảng 0–999.");
+    targets[channel]={produce,publish};
+  }
+  const fromWeek=nowWeek();
+  const history=(appData.kpi?.history||[]).filter(x=>x.fromWeek!==fromWeek);
+  const payload={targets,history:[...history,{fromWeek,targets,updatedBy:me.uid,updatedAt:iso()}].sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek)),updatedAt:iso(),updatedBy:me.uid};
+  await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI theo kênh.");
 }
