@@ -351,3 +351,200 @@ async function submitMessage(form) {
   const ok=await doWrite(()=>setDoc(doc(db,collectionNames.messages,id("MSG")),m),"Đã gửi trao đổi.");
   if(ok){await logAction(taskId,"message",kind);closeModal();}
 }
+
+function planLine(p) {
+  const typeName={week:"Tuần",month:"Tháng",campaign:"Chiến dịch",recurring:"Định kỳ"}[p.type]||p.type;
+  return `<div class="item-line"><div class="fill"><button class="task-title" data-action="plan" data-id="${safe(p.id)}">${safe(p.title)}</button>
+    <small>${safe(typeName)} · ${p.items?.length||0} nội dung · ${p.active?"Đã kích hoạt":"Bản nháp"} · ${safe(p.ownerEmail||"")}</small></div>
+    ${btn("Xem kế hoạch","plan",p.id)}</div>`;
+}
+function renderPlans() {
+  const plans=appData.plans.slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  return `<div class="head-actions"><p class="sub">Nhân viên chủ động lập kế hoạch tuần, tháng, chiến dịch hoặc việc lặp. Kích hoạt kế hoạch sẽ tự tạo công việc, không cần Giám đốc duyệt.</p>${staff()?btn("＋ Lập kế hoạch mới","new-plan","","primary"):""}</div>
+  <div class="card"><div class="section-head"><h2>Kế hoạch Marketing</h2>${pill(plans.filter(p=>p.active).length+" đang triển khai")}</div>
+  ${plans.map(planLine).join("")||empty("Chưa có kế hoạch nào. Nhân viên có thể bắt đầu lập kế hoạch.")}</div>
+  <div class="notice warn" style="margin-top:16px">Công việc định kỳ được tạo khi có người mở hệ thống. Muốn hệ thống tự chạy khi tất cả đã đóng trình duyệt cần kết nối tác vụ lịch ở máy chủ; phần này chưa được kích hoạt.</div>`;
+}
+function openPlanNew() {
+  if(!staff())return toast("Nhân viên là người lập kế hoạch.");
+  modal("Lập kế hoạch Marketing",`<form id="planForm" class="form-grid">
+    <div class="full">${field("title","Tên kế hoạch *","","text",'required maxlength="130"')}</div>
+    ${select("type","Loại kế hoạch",[["week","Kế hoạch tuần"],["month","Kế hoạch tháng"],["campaign","Chiến dịch"],["recurring","Định kỳ hằng tuần"]],"week")}
+    ${field("start","Ngày bắt đầu",today(),"date","required")}
+    ${field("end","Ngày kết thúc",addDays(today(),6),"date","required")}
+    <div class="full notice">Sau khi lưu, thêm các dòng nội dung rồi kích hoạt. Công việc sẽ tự được tạo theo mã dòng, tránh bị nhân đôi.</div>
+    <div class="full button-row end"><button type="submit" class="btn primary">Tạo kế hoạch</button></div></form>`);
+}
+async function savePlanForm(form) {
+  if(!staff())return;
+  const start=cleanDate(form.elements.start.value),end=cleanDate(form.elements.end.value);
+  const title=trim(form.elements.title.value,130),type=trim(form.elements.type.value);
+  if(!title||!start||!end||end<start)return toast("Nhập tên, thời gian hợp lệ.");
+  const p={title,type,start,end,items:[],active:false,ownerUid:me.uid,ownerEmail:me.email,createdAt:iso(),updatedAt:iso(),version:1};
+  const ok=await doWrite(()=>setDoc(doc(db,collectionNames.plans,id("PLAN")),p),"Đã tạo bản kế hoạch. Hãy thêm nội dung.");
+  if(ok)closeModal();
+}
+function openPlanDetail(key) {
+  const p=appData.plans.find(x=>x.id===key);if(!p)return;
+  const editable=staff()&&p.ownerUid===me.uid;
+  const items=Array.isArray(p.items)?p.items:[];
+  const recurring=p.type==="recurring";
+  modal("Kế hoạch · "+p.title,`<div class="stack">
+   <div class="button-row">${pill(p.active?"Đang triển khai":"Bản nháp",p.active?"good":"neutral")}${pill(p.type,"neutral")}${pill(items.length+" nội dung")}</div>
+   <div class="sub">Thời gian: ${fmt(p.start)} – ${fmt(p.end)} · Người lập: ${safe(p.ownerEmail)}</div>
+   <div class="table-wrap"><table class="table"><thead><tr><th>Chủ đề / công việc</th><th>Kênh</th><th>Deadline</th><th>Ngày đăng / Ngày lặp</th><th></th></tr></thead><tbody>
+   ${items.map(x=>`<tr><td><b>${safe(x.title)}</b></td><td>${safe(x.channel)}</td><td>${fmt(x.due)}</td><td>${recurring?"Thứ "+safe(x.weekday===0?"CN":x.weekday+1):fmt(x.publish)}</td><td>${editable?btn("Bỏ","remove-plan-item",p.id+"|"+x.id):""}</td></tr>`).join("")||`<tr><td colspan="5">${empty("Chưa có nội dung trong kế hoạch.")}</td></tr>`}
+   </tbody></table></div>
+   ${editable?`<section class="card"><h3>Thêm một dòng kế hoạch</h3><form id="planItemForm" data-plan-id="${safe(p.id)}" class="form-grid">
+      <div class="full">${field("title","Chủ đề / đầu việc *","","text",'required maxlength="160"')}</div>
+      ${select("channel","Kênh",channels.map(x=>[x,x]))}
+      ${select("category","Nhóm",[["Video","Video"],["Content","Content"],["Design","Thiết kế"],["Ads","Quảng cáo"],["Website","Website"],["Khác","Khác"]],"Content")}
+      ${recurring?select("weekday","Lặp hằng tuần",[["1","Thứ Hai"],["2","Thứ Ba"],["3","Thứ Tư"],["4","Thứ Năm"],["5","Thứ Sáu"],["6","Thứ Bảy"],["0","Chủ Nhật"]]):field("due","Deadline bàn giao",addDays(today(),1),"date","required")}
+      ${recurring?"":field("publish","Ngày dự kiến đăng",addDays(today(),2),"date")}
+      <div class="full">${txtarea("description","Brief / lưu ý")}</div>
+      <div class="full button-row end"><button type="submit" class="btn primary">Thêm dòng</button></div>
+      </form></section>
+      <div class="button-row">${btn(p.active?"Đồng bộ việc mới":"Kích hoạt & tự sinh việc","activate-plan",p.id,"primary")}${p.active?btn("Tạm dừng kế hoạch","pause-plan",p.id):""}</div>
+      <div class="notice warn">Thay đổi nội dung sau khi đã kích hoạt không xóa hoặc ghi đè các công việc đã sinh. Dòng mới sẽ tạo thêm công việc khi đồng bộ.</div>`:""}
+   </div>`);
+}
+async function addPlanItem(form) {
+  const p=appData.plans.find(x=>x.id===form.dataset.planId);
+  if(!p||!staff()||p.ownerUid!==me.uid)return;
+  const title=trim(form.elements.title.value,160),channel=trim(form.elements.channel.value);
+  if(!title||!channels.includes(channel))return toast("Nhập tên nội dung và kênh hợp lệ.");
+  const recurring=p.type==="recurring";
+  const due=recurring?"":cleanDate(form.elements.due.value);
+  const publish=recurring?"":cleanDate(form.elements.publish.value);
+  if(!recurring&&!due)return toast("Cần ngày bàn giao.");
+  const items=Array.isArray(p.items)?p.items:[];
+  if(items.length>=100)return toast("Giới hạn 100 nội dung mỗi kế hoạch.");
+  const item={id:id("IT"),title,channel,category:trim(form.elements.category.value),description:trim(form.elements.description.value),due,publish,weekday:recurring?Number(form.elements.weekday.value):null};
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,p.id),{items:[...items,item],version:(p.version||1)+1,updatedAt:iso()}),"Đã thêm nội dung vào kế hoạch.");
+  if(ok)closeModal();
+}
+async function removePlanItem(key) {
+  const [planId,itemId]=key.split("|");
+  const p=appData.plans.find(x=>x.id===planId);
+  if(!p||!staff()||p.ownerUid!==me.uid)return;
+  if(!confirm("Bỏ dòng này khỏi kế hoạch? Công việc đã sinh sẽ không tự bị xóa."))return;
+  const items=(p.items||[]).filter(x=>x.id!==itemId);
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,planId),{items,version:(p.version||1)+1,updatedAt:iso()}));
+  if(ok)closeModal();
+}
+function planToTask(p,item,uniqueId,due,publish) {
+  const stub={id:uniqueId,title:item.title,description:item.description||"",category:item.category||"Content"};
+  const review=needsReview(stub);
+  return {
+    id:uniqueId,title:item.title,owner:ownerName(),category:item.category||"Content",channel:item.channel,
+    description:item.description||"",source:"plan",planId:p.id,planItemId:item.id,
+    createdBy:p.ownerUid,priority:"medium",status:"todo",due,publish,createdAt:iso(),updatedAt:iso(),
+    updatedBy:me.uid,reviewRequired:review,approvalState:review?"pending":"not_required",
+    producedAt:"",publications:[]
+  };
+}
+async function ensureTask(p,item,uniqueId,due,publish) {
+  const ref=doc(db,collectionNames.tasks,uniqueId);
+  return runTransaction(db,async transaction=>{
+    const existing=await transaction.get(ref);
+    if(existing.exists())return false;
+    transaction.set(ref,planToTask(p,item,uniqueId,due,publish));
+    return true;
+  });
+}
+async function generatePlan(p) {
+  if(!me||!p.active)return 0;
+  if(staff()&&p.ownerUid!==me.uid)return 0;
+  const items=Array.isArray(p.items)?p.items:[];
+  let made=0;
+  for(const item of items) {
+    if(p.type==="recurring")continue;
+    const due=cleanDate(item.due)||p.start,publish=cleanDate(item.publish)||"";
+    const uniqueId="PL-"+p.id+"-"+item.id;
+    if(await ensureTask(p,item,uniqueId,due,publish))made++;
+  }
+  return made;
+}
+let generating=false;
+async function generateRecurring() {
+  if(generating||!me)return;
+  generating=true;
+  try{
+    const plans=appData.plans.filter(p=>p.active&&p.type==="recurring"&&(!staff()||p.ownerUid===me.uid));
+    const start=today();
+    for(const p of plans)for(const item of (p.items||[]))for(let n=0;n<14;n++){
+      const day=addDays(start,n),weekday=dateFrom(day).getDay();
+      if(day<p.start||day>p.end||weekday!==item.weekday)continue;
+      await ensureTask(p,item,"RC-"+p.id+"-"+item.id+"-"+day,day,day);
+    }
+  }finally{generating=false;}
+}
+async function activatePlan(planId) {
+  const p=appData.plans.find(x=>x.id===planId);
+  if(!p||!staff()||p.ownerUid!==me.uid)return;
+  if(!(p.items||[]).length)return toast("Thêm ít nhất một nội dung trước khi kích hoạt.");
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,p.id),{active:true,updatedAt:iso()}),"Đã kích hoạt kế hoạch.");
+  if(ok) {
+    try {
+      const n=await generatePlan({...p,active:true});
+      await generateRecurring();
+      toast("Đã kích hoạt kế hoạch, tạo mới "+n+" công việc. Việc cũ không bị tạo trùng.");
+    }catch(e){toast("Đã kích hoạt, nhưng tạo việc có lỗi: "+errorText(e));}
+    closeModal();
+  }
+}
+async function pausePlan(key) {
+  const p=appData.plans.find(x=>x.id===key);
+  if(!p||(!manager()&&p.ownerUid!==me.uid))return;
+  const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,key),{active:false,updatedAt:iso()}),"Đã tạm dừng kế hoạch. Những việc đã tạo vẫn giữ nguyên.");
+  if(ok)closeModal();
+}
+function renderCalendar() {
+  const [year,month]=ui.month.split("-").map(Number);
+  const start=(new Date(year,month-1,1).getDay()+6)%7;
+  const count=Math.ceil((new Date(year,month,0).getDate()+start)/7)*7;
+  const layers=ui.layers;
+  let html=["T2","T3","T4","T5","T6","T7","CN"].map(x=>`<div class="weekday">${x}</div>`).join("");
+  for(let i=0;i<count;i++){
+    const date=today(new Date(year,month-1,i-start+1));
+    const inside=date.slice(0,7)===ui.month;
+    let entries=[];
+    if(layers.post)entries.push(...appData.tasks.filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe(t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`));
+    if(layers.due)entries.push(...appData.tasks.filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe(t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`));
+    if(layers.work)entries.push(...appData.schedules.filter(s=>s.date===date).map(s=>`<button class="cal-chip work" data-action="schedule" data-id="${safe(date)}">${safe(s.mode==="off"?"Nghỉ":s.mode==="office"?"Văn phòng":s.mode==="remote"?"Từ xa":"Đi quay")} ${safe(s.start||"")}</button>`));
+    html+=`<div class="day ${inside?"":"out"}"><span class="number">${dateFrom(date).getDate()}</span>
+       ${entries.slice(0,4).join("")}${entries.length>4?`<div class="tag">+${entries.length-4} sự kiện</div>`:""}
+       ${staff()&&inside?`<button class="cal-chip work" data-action="schedule" data-id="${safe(date)}">＋ Lịch làm</button>`:""}
+       </div>`;
+  }
+  const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>appData.tasks.filter(t=>t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
+  return `<div class="toolbar"><p class="sub">Bật/tắt lớp lịch. Nhân viên tự đăng ký lịch làm, không cần duyệt và không tự dời deadline.</p>${staff()?btn("＋ Đăng ký lịch làm","schedule",today(),"primary"):""}</div>
+    <section class="card"><div class="toolbar"><div class="button-row">${btn("‹","cal-prev")}<strong>Tháng ${month}/${year}</strong>${btn("›","cal-next")}${btn("Hôm nay","cal-today")}</div>
+    <div class="checkbox-row">${[["work","Lịch làm"],["due","Deadline"],["post","Lịch đăng"]].map(([k,label])=>`<label><input type="checkbox" data-layer="${k}" ${layers[k]?"checked":""}>${label}</label>`).join("")}</div></div>
+    <div class="calendar">${html}</div></section>
+    ${conflicts.length?`<div class="notice warn" style="margin-top:16px"><b>Cảnh báo xung đột lịch:</b>${conflicts.map(x=>`<div>${fmt(x.date)} – ${taskName(x.task)}</div>`).join("")}</div>`:""}
+  `;
+}
+function openSchedule(date=today()) {
+  if(!staff())return toast("Nhân viên tự đăng ký lịch đi làm.");
+  const cur=appData.schedules.find(s=>s.id===me.uid+"_"+date);
+  modal("Đăng ký lịch làm việc",`<form id="scheduleForm" class="form-grid">
+    ${field("date","Ngày *",date,"date","required")}
+    ${select("mode","Hình thức",[["office","Tại văn phòng"],["remote","Làm từ xa"],["field","Đi quay / Sự kiện"],["off","Nghỉ"]],cur?.mode||"office")}
+    ${field("start","Giờ bắt đầu",cur?.start||"08:30","time")}
+    ${field("end","Giờ kết thúc",cur?.end||"17:30","time")}
+    <div class="full">${txtarea("note","Ghi chú",cur?.note||"")}</div>
+    <div class="full notice">Lịch có hiệu lực ngay, không cần Giám đốc phê duyệt. Nếu trùng deadline, hệ thống cảnh báo nhưng không tự thay đổi công việc.</div>
+    <div class="full button-row end"><button type="submit" class="btn primary">Lưu lịch làm</button></div>
+    </form>`);
+}
+async function saveSchedule(form) {
+  if(!staff())return;
+  const date=cleanDate(form.elements.date.value);
+  const mode=trim(form.elements.mode.value),start=trim(form.elements.start.value),end=trim(form.elements.end.value);
+  if(!date||!["office","remote","field","off"].includes(mode))return toast("Ngày hoặc hình thức không hợp lệ.");
+  if(mode!=="off"&&(!/^\d\d:\d\d$/.test(start)||!/^\d\d:\d\d$/.test(end)||end<=start))return toast("Giờ làm việc không hợp lệ.");
+  const data={ownerUid:me.uid,ownerEmail:me.email,date,mode,start:mode==="off"?"":start,end:mode==="off"?"":end,note:trim(form.elements.note.value),updatedAt:iso()};
+  const ok=await doWrite(()=>setDoc(doc(db,collectionNames.schedules,me.uid+"_"+date),data),"Đã lưu lịch đi làm.");
+  if(ok)closeModal();
+}
