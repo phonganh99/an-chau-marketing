@@ -79,10 +79,8 @@ async function firebaseAccessToken(env) {
   if (serviceToken && Date.now() < serviceToken.expires) return serviceToken.token;
   const credentials = JSON.parse(env.GCP_SERVICE_ACCOUNT_JSON || "{}");
   if (!credentials.client_email || !credentials.private_key || credentials.project_id !== env.FIREBASE_PROJECT_ID) throw Error("Service account not configured correctly");
-  const pkcs8 = fromBase64url(
-    btoa(credentials.private_key.replace(/\\n/g, "\n").replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, ""))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-  );
+  const pem = credentials.private_key.replace(/\\n/g, "\n").replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
+  const pkcs8 = Uint8Array.from(atob(pem), char => char.charCodeAt(0));
   const rsaKey = await crypto.subtle.importKey("pkcs8", pkcs8, {name: "RSASSA-PKCS1-v1_5", hash: "SHA-256"}, false, ["sign"]);
   const now = Math.floor(Date.now() / 1000);
   const head = base64url(encoder.encode(JSON.stringify({alg: "RS256", typ: "JWT"})));
