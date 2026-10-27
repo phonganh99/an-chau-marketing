@@ -14,8 +14,8 @@ PUBLIC_WORKER_URL = "https://REPLACE_WITH_WORKER_SUBDOMAIN.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "an-chau-telegram"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_name = "anchau_mkt"
+database_id = "2763c04a-205e-4d97-a3d4-665abfc221ea"
 migrations_dir = "migrations"
 
 [triggers]
