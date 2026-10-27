@@ -139,7 +139,7 @@ async function getNewEvents(env, since) {
     from: [{collectionId: "marketingEvents"}],
     where: {fieldFilter: {field: {fieldPath: "createdAt"}, op: "GREATER_THAN", value: {stringValue: since}}},
     orderBy: [{field: {fieldPath: "createdAt"}, direction: "ASCENDING"}],
-    limit: 75,
+    limit: 15,
   }};
   const result = await firestoreRequest(env, ":runQuery", {method: "POST", body: JSON.stringify(query)});
   return (Array.isArray(result) ? result : []).filter(x => x.document).map(x => parseFirestore(x.document));
