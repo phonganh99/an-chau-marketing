@@ -4,7 +4,7 @@ import { getFirestore, collection, doc, onSnapshot, getDoc, setDoc, updateDoc, r
 
 const CONFIG = window.ANCHAU_CONFIG || {};
 const TELEGRAM_WORKER = String(CONFIG.telegramWorkerUrl || "").trim().replace(/\/+$/, "");
-const telegramState = {loading:false,connected:null,codeUrl:"",error:"",message:""};
+const telegramState = {loading:false,connected:null,codeUrl:"",error:"",message:"",diagnostics:null};
 const $ = (id) => document.getElementById(id);
 const collectionNames = {
   tasks:"marketingTasks", plans:"marketingPlans", schedules:"marketingSchedules",
@@ -796,6 +796,7 @@ async function handleAction(action,key) {
   if(action==="telegram-refresh")return refreshTelegram();
   if(action==="telegram-unlink")return unlinkTelegram();
   if(action==="telegram-webhook")return setupTelegramWebhook();
+  if(action==="telegram-diagnostics")return checkTelegramDiagnostics();
   if(action==="retry-sync")return subscriptions();
   if(action==="task")return openTaskDetail(key);
   if(action==="new-task")return openTaskForm();
@@ -889,7 +890,7 @@ async function telegramRequest(path,method="GET"){
 function telegramActions(){
   return '<div class="button-row">'+btn("Làm mới trạng thái","telegram-refresh")+
     (telegramState.connected?btn("Ngắt liên kết","telegram-unlink","","danger"):btn("Lấy liên kết kết nối","telegram-pair","","primary"))+
-    (manager()?btn("Kích hoạt webhook (quản lý)","telegram-webhook"):"")+'</div>';
+    (manager()?btn("Kích hoạt webhook (quản lý)","telegram-webhook")+btn("Kiểm tra cấu hình","telegram-diagnostics"):"")+'</div>';
 }
 function renderTelegram(){
   const configured=!!TELEGRAM_WORKER;
@@ -903,6 +904,8 @@ function renderTelegram(){
       ${telegramState.loading?"<p class='sub'>Đang kết nối máy chủ...</p>":""}
       ${telegramState.message?`<div class="notice">${safe(telegramState.message)}</div>`:""}
       ${telegramState.error?`<div class="notice warn" role="alert">${safe(telegramState.error)}</div>`:""}
+      ${manager()&&telegramState.diagnostics?`<div class="notice"><strong>Kiểm tra cấu hình Worker (chỉ hiển thị có/không, không hiển thị khóa)</strong>
+        ${Object.entries(telegramState.diagnostics).map(([key,ready])=>`<div>${ready?"✓":"⚠"} ${safe(key)}: ${ready?"Đã có hiệu lực":"Thiếu / chưa có hiệu lực"}</div>`).join("")}</div>`:""}
     </section>
     <section class="card"><h2>Những thông báo sẽ nhận</h2>
       <div class="item-line"><div class="fill"><b>Công việc mới</b><small>Nhân viên được giao việc nhận thông báo riêng.</small></div></div>
@@ -940,6 +943,18 @@ async function unlinkTelegram(){
   }catch(err){telegramState.error=String(err.message||err);}
   finally{telegramState.loading=false;render();}
 }
+async function checkTelegramDiagnostics(){
+  if(!manager())return;
+  telegramState.loading=true;telegramState.error="";render();
+  try{
+    const response=await telegramRequest("/api/diagnostics");
+    telegramState.diagnostics=response.checks||null;
+    const missing=Object.entries(telegramState.diagnostics||{}).filter(([,ready])=>!ready).map(([key])=>key);
+    telegramState.message=missing.length?"Đang thiếu cấu hình: "+missing.join(", "):"Worker đã nhận đủ biến và Secret. Có thể thử kích hoạt webhook.";
+  }catch(err){telegramState.error=String(err.message||err);}
+  finally{telegramState.loading=false;render();}
+}
+
 async function setupTelegramWebhook(){
   if(!manager())return;
   telegramState.loading=true;telegramState.error="";render();
