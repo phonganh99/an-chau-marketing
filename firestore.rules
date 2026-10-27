@@ -4,11 +4,13 @@ service cloud.firestore {
     function isManager() {
       return request.auth != null
         && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
         && request.auth.token.email == 'phonganh99@gmail.com';
     }
     function isStaff() {
       return request.auth != null
         && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
         && request.auth.token.email == 'duhocanchau@gmail.com';
     }
     function member() {
