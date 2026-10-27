@@ -3,6 +3,8 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 import { getFirestore, collection, doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
 const CONFIG = window.ANCHAU_CONFIG || {};
+const TELEGRAM_WORKER = String(CONFIG.telegramWorkerUrl || "").trim().replace(/\/+$/, "");
+const telegramState = {loading:false,connected:null,codeUrl:"",error:"",message:""};
 const $ = (id) => document.getElementById(id);
 const collectionNames = {
   tasks:"marketingTasks", plans:"marketingPlans", schedules:"marketingSchedules",
@@ -93,6 +95,14 @@ function subscriptions() {
       appData[key]=snapshot.docs.map(d=>({...d.data(),id:d.id}));
       syncState[key]={status:"ready",code:""};
       render();
+      if(key==="tasks" && window.location.hash.startsWith("#task=")) {
+        let taskId="";
+        try{taskId=decodeURIComponent(window.location.hash.slice(6));}catch{}
+        if(taskId && taskById(taskId)){
+          history.replaceState(null,"",window.location.pathname+window.location.search);
+          openTaskDetail(taskId);
+        }
+      }
       if(key==="plans" && staff()) generateRecurring().catch(e=>console.warn("Lịch lặp:",e));
     },e=>{
       console.warn("Firestore",col,e);
@@ -130,22 +140,22 @@ function syncBanner() {
 }
 function mountNav() {
   const pages = manager() ?
-    [["dashboard","▦","Tổng quan"],["inbox","◷","Cần tôi xử lý"],["tasks","☷","Công việc"],["plans","▤","Kế hoạch"],["calendar","▣","Lịch Marketing"],["kpi","◫","KPI & báo cáo"],["settings","⚙","Cài đặt"]] :
-    [["dashboard","⌂","Hôm nay"],["tasks","☷","Công việc"],["plans","▤","Lập kế hoạch"],["calendar","▣","Lịch Marketing"],["kpi","◫","KPI của tôi"]];
+    [["dashboard","▦","Tổng quan"],["inbox","◷","Cần tôi xử lý"],["tasks","☷","Công việc"],["plans","▤","Kế hoạch"],["calendar","▣","Lịch Marketing"],["kpi","◫","KPI & báo cáo"],["settings","⚙","Cài đặt"],["telegram","✉","Telegram"]] :
+    [["dashboard","⌂","Hôm nay"],["tasks","☷","Công việc"],["plans","▤","Lập kế hoạch"],["calendar","▣","Lịch Marketing"],["kpi","◫","KPI của tôi"],["telegram","✉","Telegram"]];
   $("nav").innerHTML=pages.map(([view,icon,label])=>`<button class="navbtn ${ui.view===view?"active":""}" data-action="go" data-id="${view}"><span>${icon}</span>${label}</button>`).join("");
   $("roleLabel").textContent=manager()?"QUẢN LÝ · GIÁM ĐỐC":"NHÂN VIÊN MARKETING";
 }
-function go(view) {ui.view=view;render();window.scrollTo({top:0,behavior:"smooth"});}
+function go(view) {ui.view=view;render();window.scrollTo({top:0,behavior:"smooth"});if(view==="telegram" && TELEGRAM_WORKER)refreshTelegram().catch(e=>console.warn(e));}
 function render() {
   if(!me)return;
   mountNav();
   const titles = {
     dashboard:manager()?"Tổng quan điều hành":"Công việc hôm nay",
     inbox:"Cần tôi xử lý",tasks:"Quản lý công việc",plans:"Kế hoạch Marketing",
-    calendar:"Lịch Marketing",kpi:"KPI & báo cáo tuần",settings:"Cài đặt"
+    calendar:"Lịch Marketing",kpi:"KPI & báo cáo tuần",settings:"Cài đặt",telegram:"Kết nối Telegram"
   };
   $("pageTitle").textContent=titles[ui.view]||"Marketing";
-  const renderers = {dashboard:renderDashboard,inbox:renderInbox,tasks:renderTasks,plans:renderPlans,calendar:renderCalendar,kpi:renderKpi,settings:renderSettings};
+  const renderers = {dashboard:renderDashboard,inbox:renderInbox,tasks:renderTasks,plans:renderPlans,calendar:renderCalendar,kpi:renderKpi,settings:renderSettings,telegram:renderTelegram};
   $("content").innerHTML=syncBanner()+(renderers[ui.view]||renderDashboard)();
 }
 function taskName(t) {return `<button class="task-title" data-action="task" data-id="${safe(t.id)}">${safe(t.title)}</button>`;}
@@ -782,6 +792,10 @@ function backupCsv(){
 
 async function handleAction(action,key) {
   if(action==="go")return go(key);
+  if(action==="telegram-pair")return createTelegramPair();
+  if(action==="telegram-refresh")return refreshTelegram();
+  if(action==="telegram-unlink")return unlinkTelegram();
+  if(action==="telegram-webhook")return setupTelegramWebhook();
   if(action==="retry-sync")return subscriptions();
   if(action==="task")return openTaskDetail(key);
   if(action==="new-task")return openTaskForm();
@@ -861,6 +875,81 @@ $("modalClose").addEventListener("click",closeModal);
 $("modal").addEventListener("click",e=>{if(e.target===$("modal"))closeModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal();});
 
+async function telegramRequest(path,method="GET"){
+  if(!TELEGRAM_WORKER||!/^https:\/\/[a-z0-9.-]+\.workers\.dev$/i.test(TELEGRAM_WORKER))throw Error("Chưa cấu hình địa chỉ Cloudflare Worker hợp lệ.");
+  if(!me||!me.getIdToken)throw Error("Cần đăng nhập Google.");
+  const token=await me.getIdToken();
+  const response=await fetch(TELEGRAM_WORKER+path,{
+    method,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},cache:"no-store"
+  });
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(body.error||"Máy chủ Telegram chưa sẵn sàng ("+response.status+").");
+  return body;
+}
+function telegramActions(){
+  return '<div class="button-row">'+btn("Làm mới trạng thái","telegram-refresh")+
+    (telegramState.connected?btn("Ngắt liên kết","telegram-unlink","","danger"):btn("Lấy liên kết kết nối","telegram-pair","","primary"))+
+    (manager()?btn("Kích hoạt webhook (quản lý)","telegram-webhook"):"")+'</div>';
+}
+function renderTelegram(){
+  const configured=!!TELEGRAM_WORKER;
+  const state=telegramState.connected===true?"Đã liên kết":telegramState.connected===false?"Chưa liên kết":"Chưa kiểm tra";
+  return `<div class="stack">
+    <section class="card"><div class="section-head"><h2>Telegram riêng cho tài khoản của tôi</h2>${pill(state,telegramState.connected?"good":"neutral")}</div>
+      <p class="sub">Tài khoản Google: <b>${safe(me?.email||"")}</b>. Mỗi người tự kết nối Telegram của mình; không dùng chung Telegram username hay bot token.</p>
+      ${!configured?`<div class="notice warn">Chưa kích hoạt máy chủ Cloudflare Workers. Khi Worker được triển khai, thêm URL công khai vào firebase-config.js → telegramWorkerUrl. Không nhập token vào website.</div>`:
+      `<div class="notice">Chọn “Lấy liên kết kết nối” rồi mở Telegram và nhấn Start. Liên kết dùng một lần, hết hạn sau 10 phút.</div>${telegramActions()}`}
+      ${telegramState.codeUrl&&telegramState.codeUrl.startsWith("https://t.me/")?`<p><a href="${safe(telegramState.codeUrl)}" target="_blank" rel="noopener noreferrer" class="btn primary">Mở Telegram để kết nối</a></p><p class="sub">Mỗi người tự mở liên kết riêng. Không chia sẻ liên kết này cho người khác.</p>`:""}
+      ${telegramState.loading?"<p class='sub'>Đang kết nối máy chủ...</p>":""}
+      ${telegramState.message?`<div class="notice">${safe(telegramState.message)}</div>`:""}
+      ${telegramState.error?`<div class="notice warn" role="alert">${safe(telegramState.error)}</div>`:""}
+    </section>
+    <section class="card"><h2>Những thông báo sẽ nhận</h2>
+      <div class="item-line"><div class="fill"><b>Công việc mới</b><small>Nhân viên được giao việc nhận thông báo riêng.</small></div></div>
+      <div class="item-line"><div class="fill"><b>Duyệt và phản hồi</b><small>Thông báo khi có câu hỏi, nội dung cần duyệt, yêu cầu sửa hoặc đã duyệt.</small></div></div>
+      <div class="item-line"><div class="fill"><b>Nhắc deadline</b><small>Nhắc ngày mai, hôm nay và một lần khi quá hạn.</small></div></div>
+      <p class="sub">Bot chỉ thông báo. Mọi phê duyệt và cập nhật kết quả vẫn thực hiện trên website An Châu.</p>
+    </section></div>`;
+}
+async function refreshTelegram(){
+  if(!TELEGRAM_WORKER)return;
+  telegramState.loading=true;telegramState.error="";render();
+  try{
+    const result=await telegramRequest("/api/me");
+    telegramState.connected=!!result.connected;
+    if(telegramState.connected)telegramState.codeUrl="";
+  }catch(err){telegramState.error=String(err.message||err);}
+  finally{telegramState.loading=false;render();}
+}
+async function createTelegramPair(){
+  telegramState.loading=true;telegramState.error="";telegramState.message="";render();
+  try{
+    const result=await telegramRequest("/api/pair-code","POST");
+    telegramState.codeUrl=result.url||"";
+    telegramState.message="Đã tạo liên kết một lần. Nhấn nút mở Telegram, sau đó quay lại trang và nhấn Làm mới trạng thái.";
+  }catch(err){telegramState.error=String(err.message||err);}
+  finally{telegramState.loading=false;render();}
+}
+async function unlinkTelegram(){
+  if(!confirm("Ngắt nhận thông báo Telegram của tài khoản này?"))return;
+  telegramState.loading=true;telegramState.error="";render();
+  try{
+    await telegramRequest("/api/unlink","POST");
+    telegramState.connected=false;telegramState.codeUrl="";
+    telegramState.message="Đã ngắt liên kết.";
+  }catch(err){telegramState.error=String(err.message||err);}
+  finally{telegramState.loading=false;render();}
+}
+async function setupTelegramWebhook(){
+  if(!manager())return;
+  telegramState.loading=true;telegramState.error="";render();
+  try{
+    await telegramRequest("/api/configure-webhook","POST");
+    telegramState.message="Webhook Telegram đã được đăng ký. Mỗi người có thể liên kết bot bằng mã riêng.";
+  }catch(err){telegramState.error=String(err.message||err);}
+  finally{telegramState.loading=false;render();}
+}
+
 function initFirebase(){
   const required=[CONFIG.apiKey,CONFIG.authDomain,CONFIG.projectId,CONFIG.appId,CONFIG.managerEmail,CONFIG.staffEmail];
   if(!required.every(x=>typeof x==="string"&&x&&!x.includes("THAY_"))) {
@@ -888,7 +977,7 @@ function initFirebase(){
   onAuthStateChanged(auth,async user=>{
     unsubscribeAll();
     if(!user){
-      me=null;role=null;
+      me=null;role=null;telegramState.connected=null;telegramState.codeUrl="";telegramState.error="";telegramState.message="";
       for(const key of Object.keys(appData))appData[key]=key==="kpi"?null:[];
       for(const key of Object.keys(syncState))delete syncState[key];
       $("app").classList.add("hidden");
