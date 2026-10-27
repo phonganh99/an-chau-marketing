@@ -367,7 +367,7 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname, c = cors(request, env);
     try {
-      if (request.method === "GET" && path === "/health") return json({ok:true,service:"an-chau-telegram",version:"1.0.0"});
+      if (request.method === "GET" && path === "/health") return json({ok:true,service:"an-chau-telegram",version:"1.0.1"});
       if (path === "/telegram/webhook" && request.method === "POST") return handleWebhook(env, request);
       if (path.startsWith("/api/")) {
         if (request.method === "OPTIONS") return withCors(new Response(null,{status:204}), c);
