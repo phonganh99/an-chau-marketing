@@ -716,33 +716,48 @@ async function confirmWeekly(form) {
 }
 function renderSettings() {
   if(!manager())return empty("Không đủ quyền truy cập.");
-  const targets=targetForWeek(nowWeek());
   return `<div class="stack">
-    <section class="card"><div class="section-head"><h2>Thiết lập KPI tối thiểu theo tuần</h2>${pill("Giám đốc quản lý")}</div>
-      <p class="sub">KPI theo từng kênh, tách số sản phẩm sản xuất và số lượt xuất bản. Chỉ tiêu mới áp dụng từ tuần hiện tại và không làm thay đổi KPI lịch sử.</p>
+    <section class="card">
+      <div class="section-head"><h2>KPI tối thiểu theo từng nhân viên</h2>${pill("Giám đốc quản lý")}</div>
+      <p class="sub">Mỗi người có chỉ tiêu sản xuất và xuất bản riêng cho TikTok, Facebook và Website. Chỉ tiêu thay đổi có lịch sử theo tuần.</p>
       <form id="kpiSettingsForm" class="stack">
-      <div class="table-wrap"><table class="table"><thead><tr><th>Kênh</th><th>Sản xuất / tuần</th><th>Xuất bản / tuần</th></tr></thead><tbody>
-      ${channels.map(c=>`<tr><td><b>${c}</b></td><td><div class="field"><input name="${c}_produce" aria-label="${c} sản xuất" type="number" min="0" max="999" value="${Number(targets[c]?.produce)||0}"></div></td>
-        <td><div class="field"><input name="${c}_publish" aria-label="${c} xuất bản" type="number" min="0" max="999" value="${Number(targets[c]?.publish)||0}"></div></td></tr>`).join("")}
-      </tbody></table></div><div class="button-row end"><button type="submit" class="btn primary">Lưu KPI tối thiểu</button></div></form>
+      ${staffEmails.map((email,index)=>{
+        const targets=targetForWeek(nowWeek(),email);
+        return `<div class="list-card"><h3>${safe(staffLabel(email))} · ${safe(email)}</h3>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Kênh</th><th>Sản xuất / tuần</th><th>Xuất bản / tuần</th></tr></thead><tbody>
+          ${channels.map(c=>`<tr><td><b>${safe(c)}</b></td>
+            <td><div class="field"><input name="staff${index}_${c}_produce" type="number" min="0" max="999" value="${Number(targets[c]?.produce)||0}" aria-label="Sản xuất ${safe(c)} ${safe(email)}"></div></td>
+            <td><div class="field"><input name="staff${index}_${c}_publish" type="number" min="0" max="999" value="${Number(targets[c]?.publish)||0}" aria-label="Xuất bản ${safe(c)} ${safe(email)}"></div></td></tr>`).join("")}
+          </tbody></table></div></div>`;
+      }).join("")}
+      <div class="button-row end"><button type="submit" class="btn primary">Lưu KPI cả hai nhân viên</button></div></form>
+    </section>
+    <section class="card"><h2>Nhân sự Marketing</h2>
+      ${staffEmails.map(email=>`<div class="item-line"><div class="fill"><b>${safe(staffLabel(email))}</b><small>${safe(email)}</small></div><span class="pill good">Được cấp quyền V3</span></div>`).join("")}
+      <p class="sub">Người phụ trách được chọn bằng email trong form giao việc. Công việc cũ chưa có email mặc định thuộc Nhân viên 1 và có thể được Giám đốc phân công lại.</p>
     </section>
     <section class="card"><h2>Quy tắc duyệt nội dung</h2><p class="sub">Tự nhận diện các nội dung nhạy cảm liên quan visa, học phí, chi phí, tuyển sinh, cam kết hoặc quảng cáo. Giám đốc có quyền bật duyệt thủ công trên bất kỳ công việc nào. Nội dung không thuộc nhóm này không cần duyệt trước khi ghi nhận đã đăng.</p><div class="notice warn">Đây là bộ lọc từ khóa cơ bản, không thay thế kiểm tra pháp lý hoặc kiểm duyệt nội dung. Nhân viên không thể tự xác nhận “Đã duyệt”.</div></section>
     <section class="card"><h2>Sao lưu dữ liệu</h2><p class="sub">Tải dữ liệu hiện có để có bản dự phòng trước khi chuyển phiên bản.</p><div class="button-row">${btn("↓ Sao lưu JSON","backup-json")}${btn("↓ Xuất CSV công việc","backup-csv")}</div></section>
-    <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, hai người chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
+    <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, Giám đốc và hai nhân viên chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
   </div>`;
 }
+
 async function saveTargets(form) {
   if(!manager())return;
-  const targets={};
-  for(const channel of channels) {
-    const produce=Number(form.elements[channel+"_produce"].value),publish=Number(form.elements[channel+"_publish"].value);
-    if(!Number.isInteger(produce)||produce<0||produce>999||!Number.isInteger(publish)||publish<0||publish>999)return toast("KPI phải là số nguyên trong khoảng 0–999.");
-    targets[channel]={produce,publish};
+  const fromWeek=nowWeek(),staffTargets={},history=[...(appData.kpi?.history||[])].filter(h=>h.fromWeek!==fromWeek);
+  for(let index=0;index<staffEmails.length;index++){
+    const email=staffEmails[index],targets={};
+    for(const channel of channels){
+      const produce=Number(form.elements["staff"+index+"_"+channel+"_produce"].value),publish=Number(form.elements["staff"+index+"_"+channel+"_publish"].value);
+      if(!Number.isInteger(produce)||produce<0||produce>999||!Number.isInteger(publish)||publish<0||publish>999)return toast("KPI phải là số nguyên từ 0 đến 999.");
+      targets[channel]={produce,publish};
+    }
+    staffTargets[email]=targets;
+    history.push({fromWeek,employeeEmail:email,targets,updatedBy:me.uid,updatedAt:iso()});
   }
-  const fromWeek=nowWeek();
-  const history=(appData.kpi?.history||[]).filter(x=>x.fromWeek!==fromWeek);
-  const payload={targets,history:[...history,{fromWeek,targets,updatedBy:me.uid,updatedAt:iso()}].sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek)),updatedAt:iso(),updatedBy:me.uid};
-  await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI theo kênh.");
+  history.sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
+  const payload={...appData.kpi,staffTargets,history,updatedAt:iso(),updatedBy:me.uid};
+  await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI riêng cho từng nhân viên.");
 }
 
 function downloadData(data,name,type){
