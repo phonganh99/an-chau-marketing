@@ -37,15 +37,23 @@ const needsReview = (task) => {
 };
 
 const appData = { tasks:[],plans:[],schedules:[],messages:[],events:[],reports:[],notes:[],kpi:null };
-const ui = {view:"dashboard",month:today().slice(0,7), week:weekStart(), filter:"", layers:{work:true,due:true,post:true}, planType:"week"};
+const ui = {view:"dashboard",month:today().slice(0,7), week:weekStart(), filter:"", staffFilter:"", kpiEmployee:"phongspotify00@gmail.com", layers:{work:true,due:true,post:true}, planType:"week"};
 let auth,db,me=null,role=null,unsubs=[],toastTimer=null;
 const syncState = {};
 const managerEmail = trim(CONFIG.managerEmail).toLowerCase();
 const staffEmail = trim(CONFIG.staffEmail).toLowerCase();
+const staffEmails = [...new Set((Array.isArray(CONFIG.staffEmails)&&CONFIG.staffEmails.length?CONFIG.staffEmails:[CONFIG.staffEmail]).map(x=>trim(x).toLowerCase()).filter(Boolean))];
+const staffLabels = {"phongspotify00@gmail.com":"Nhân viên 1","hathu0374@gmail.com":"Nhân viên 2"};
+const staffLabel = email => staffLabels[email] || (email||"Nhân viên Marketing");
+const taskAssignee = t => trim(t?.assigneeEmail || (t?.source==="self" && t?.createdByEmail) || staffEmails[0] || "").toLowerCase();
+const myTasks = () => appData.tasks.filter(t=>manager() || taskAssignee(t)===trim(me?.email).toLowerCase());
+const taskOwnerDisplay = t => staffLabel(taskAssignee(t));
+const employeeOptions = () => staffEmails.map(email=>[email,staffLabel(email)+" · "+email]);
+const selectedEmployee = () => manager()?ui.kpiEmployee:trim(me?.email).toLowerCase();
 const manager = () => role === "manager";
 const staff = () => role === "staff";
-const ownerName = () => "Nhân viên Marketing";
-const taskById = (key) => appData.tasks.find(t=>t.id===key);
+const ownerName = () => staffLabel(me?.email || staffEmails[0]);
+const taskById = (key) => myTasks().find(t=>t.id===key);
 const nowWeek = () => weekStart();
 const isLate = (t) => t.status!=="done"&&t.status!=="cancelled"&&t.due&&t.due<today();
 const pill = (label,style="") => `<span class="pill ${style}">${safe(label)}</span>`;
@@ -142,7 +150,7 @@ function render() {
 }
 function taskName(t) {return `<button class="task-title" data-action="task" data-id="${safe(t.id)}">${safe(t.title)}</button>`;}
 function taskLine(t) {
-  return `<div class="item-line"><div class="fill">${taskName(t)}<small>${safe(t.channel||"Nội bộ")} · ${safe(t.owner||ownerName())} · Hạn ${fmt(t.due)} · ${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Theo kế hoạch":"Giám đốc giao")}</small></div>${pill(statusLabels[t.status]||"Chưa cập nhật",isLate(t)?"bad":t.status==="review"?"warn":t.status==="done"?"good":"")}</div>`;
+  return `<div class="item-line"><div class="fill">${taskName(t)}<small>${safe(t.channel||"Nội bộ")} · ${safe(taskOwnerDisplay(t))} · Hạn ${fmt(t.due)} · ${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Theo kế hoạch":"Giám đốc giao")}</small></div>${pill(statusLabels[t.status]||"Chưa cập nhật",isLate(t)?"bad":t.status==="review"?"warn":t.status==="done"?"good":"")}</div>`;
 }
 function weekTasks(start=nowWeek()) {
   const end=addDays(start,7);
@@ -171,7 +179,7 @@ function waitingQuestions() {
   });
 }
 function renderDashboard() {
-  const tasks=appData.tasks.filter(t=>t.status!=="cancelled");
+  const tasks=myTasks().filter(t=>t.status!=="cancelled");
   const due=tasks.filter(t=>t.status!=="done"&&t.due<=addDays(today(),2)).sort((a,b)=>(a.due||"").localeCompare(b.due||"")).slice(0,8);
   const review=tasks.filter(t=>t.status==="review");
   const questions=waitingQuestions();
@@ -202,11 +210,11 @@ function renderInbox() {
 }
 function renderTasks() {
   const q=ui.filter.trim().toLowerCase();
-  const filtered=appData.tasks.filter(t=>!q||[t.title,t.owner,t.channel,t.description,t.category].join(" ").toLowerCase().includes(q)).sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
+  const filtered=myTasks().filter(t=>(!ui.staffFilter||!manager()||taskAssignee(t)===ui.staffFilter)&&(!q||[t.title,t.owner,taskAssignee(t),t.channel,t.description,t.category].join(" ").toLowerCase().includes(q))).sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
   return `<div class="head-actions"><p class="sub">Công việc được giao, tự tạo và tự sinh từ kế hoạch. Công việc đã hủy vẫn được giữ để đối chiếu lịch sử.</p>${btn(manager()?"＋ Giao việc mới":"＋ Tự tạo công việc","new-task","","primary")}</div>
-    <div class="filters"><input id="searchTask" placeholder="Tìm công việc / kênh / người phụ trách" value="${safe(ui.filter)}" aria-label="Tìm công việc">${btn("Xóa lọc","clear-filter")}</div>
+    <div class="filters"><input id="searchTask" placeholder="Tìm công việc / kênh / người phụ trách" value="${safe(ui.filter)}" aria-label="Tìm công việc">${manager()?`<select id="staffTaskFilter" aria-label="Lọc theo nhân viên"><option value="">Tất cả nhân viên</option>${employeeOptions().map(([email,label])=>`<option value="${safe(email)}" ${ui.staffFilter===email?"selected":""}>${safe(label)}</option>`).join("")}</select>`:""}${btn("Xóa lọc","clear-filter")}</div>
     <div class="card table-wrap"><table class="table"><thead><tr><th>Công việc</th><th>Nguồn</th><th>Kênh</th><th>Deadline</th><th>Trạng thái</th><th></th></tr></thead><tbody>
-    ${filtered.map(t=>`<tr><td>${taskName(t)}<div class="tag">${safe(t.owner||ownerName())}</div></td><td>${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Kế hoạch":"Giám đốc giao")}</td><td>${safe(t.channel||"Nội bộ")}</td><td>${fmt(t.due)}</td><td>${pill(statusLabels[t.status]||"—",isLate(t)?"bad":t.status==="done"?"good":t.status==="review"?"warn":"")}</td><td>${btn("Mở","task",t.id)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("Chưa có công việc.")}</td></tr>`}</tbody></table></div>`;
+    ${filtered.map(t=>`<tr><td>${taskName(t)}<div class="tag">${safe(taskOwnerDisplay(t))} · ${safe(taskAssignee(t))}</div></td><td>${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Kế hoạch":"Giám đốc giao")}</td><td>${safe(t.channel||"Nội bộ")}</td><td>${fmt(t.due)}</td><td>${pill(statusLabels[t.status]||"—",isLate(t)?"bad":t.status==="done"?"good":t.status==="review"?"warn":"")}</td><td>${btn("Mở","task",t.id)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("Chưa có công việc.")}</td></tr>`}</tbody></table></div>`;
 }
 
 function taskForm(t=null) {
@@ -219,7 +227,7 @@ function taskForm(t=null) {
   if(t?.channel&&!allowedChannels.includes(t.channel))allowedChannels.push(t.channel);
   return `<form id="taskForm" data-task-id="${safe(t?.id||"")}" class="form-grid">
     <div class="full">${field("title","Tên công việc *",name,"text",'required maxlength="160"')}</div>
-    ${manager()?field("owner","Người thực hiện *",owner,"text",'required maxlength="70"'):""}
+    ${manager()?select("assigneeEmail","Người phụ trách *",employeeOptions(),taskAssignee(t)):""}
     ${select("category","Nhóm công việc",categories.map(x=>[x,x]),t?.category||"Content")}
     ${select("channel","Kênh",allowedChannels.map(x=>[x,x]),t?.channel||"TikTok")}
     ${select("priority","Ưu tiên",[["high","Cao"],["medium","Trung bình"],["low","Thấp"]],t?.priority||"medium")}
@@ -242,18 +250,20 @@ async function saveTaskForm(form) {
   if(old&&!manager()&&!(old.source==="self"&&old.createdBy===me.uid))return toast("Không đủ quyền chỉnh sửa.");
   const val=(key)=>trim(form.elements[key]?.value||"");
   const newTask={
-    title:val("title"),owner:manager()?val("owner"):ownerName(),category:val("category"),
+    title:val("title"),assigneeEmail:manager()?val("assigneeEmail"):trim(me.email).toLowerCase(),category:val("category"),
     channel:val("channel"),priority:val("priority"),due:val("due"),publish:val("publish"),
     description:val("description"),updatedAt:iso(),updatedBy:me.uid
   };
-  if(!newTask.title||!newTask.owner||!cleanDate(newTask.due))return toast("Vui lòng điền tên việc, người phụ trách và deadline.");
+  newTask.owner=staffLabel(newTask.assigneeEmail);
+  if(!staffEmails.includes(newTask.assigneeEmail))return toast("Chỉ được giao việc cho nhân viên đã được cấp quyền.");
+  if(!newTask.title||!cleanDate(newTask.due))return toast("Vui lòng điền tên việc, người phụ trách và deadline.");
   if(newTask.publish&&!cleanDate(newTask.publish))return toast("Ngày đăng không hợp lệ.");
   if(manager()){
     newTask.status=val("status")||"todo";
     if(!statusLabels[newTask.status])return toast("Trạng thái không hợp lệ.");
   }
   if(!old){
-    newTask.createdAt=iso();newTask.createdBy=me.uid;newTask.source=manager()?"assigned":"self";
+    newTask.createdAt=iso();newTask.createdBy=me.uid;newTask.createdByEmail=trim(me.email).toLowerCase();newTask.source=manager()?"assigned":"self";
     newTask.id=id("MK");newTask.status=newTask.status||"todo";
     newTask.reviewRequired=needsReview(newTask);
     newTask.approvalState=newTask.reviewRequired?"pending":"not_required";
@@ -307,7 +317,7 @@ function openTaskDetail(key) {
   const history=appData.events.filter(e=>e.taskId===t.id).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,30);
   const body=`<div class="stack">
     <div class="button-row">${pill(statusLabels[t.status]||"—",t.status==="done"?"good":t.status==="review"?"warn":"")}${pill(t.source==="self"?"Tự tạo":t.source==="plan"?"Từ kế hoạch":"Giám đốc giao","neutral")}${pill(t.channel||"Nội bộ","neutral")}</div>
-    <div class="sub">Phụ trách: <b>${safe(t.owner||ownerName())}</b> · Hạn: <b>${fmt(t.due)}</b> · Lịch đăng: <b>${fmt(t.publish)}</b></div>
+    <div class="sub">Phụ trách: <b>${safe(taskOwnerDisplay(t))}</b> (${safe(taskAssignee(t))}) · Hạn: <b>${fmt(t.due)}</b> · Lịch đăng: <b>${fmt(t.publish)}</b></div>
     <div class="notice"><b>Brief:</b> ${safe(t.description||"Chưa có yêu cầu bổ sung.")}</div>
     ${milestones}
     <div class="button-row">${actions}</div>
@@ -396,7 +406,7 @@ function planLine(p) {
     ${btn("Xem kế hoạch","plan",p.id)}</div>`;
 }
 function renderPlans() {
-  const plans=appData.plans.slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  const plans=appData.plans.filter(p=>manager()||p.ownerUid===me.uid).slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
   return `<div class="head-actions"><p class="sub">Nhân viên chủ động lập kế hoạch tuần, tháng, chiến dịch hoặc việc lặp. Kích hoạt kế hoạch sẽ tự tạo công việc, không cần Giám đốc duyệt.</p>${staff()?btn("＋ Lập kế hoạch mới","new-plan","","primary"):""}</div>
   <div class="card"><div class="section-head"><h2>Kế hoạch Marketing</h2>${pill(plans.filter(p=>p.active).length+" đang triển khai")}</div>
   ${plans.map(planLine).join("")||empty("Chưa có kế hoạch nào. Nhân viên có thể bắt đầu lập kế hoạch.")}</div>
@@ -475,7 +485,7 @@ function planToTask(p,item,uniqueId,due,publish) {
   const stub={id:uniqueId,title:item.title,description:item.description||"",category:item.category||"Content"};
   const review=needsReview(stub);
   return {
-    id:uniqueId,title:item.title,owner:ownerName(),category:item.category||"Content",channel:item.channel,
+    id:uniqueId,title:item.title,owner:staffLabel(p.ownerEmail),assigneeEmail:trim(p.ownerEmail).toLowerCase(),createdByEmail:trim(p.ownerEmail).toLowerCase(),category:item.category||"Content",channel:item.channel,
     description:item.description||"",source:"plan",planId:p.id,planItemId:item.id,
     createdBy:p.ownerUid,priority:"medium",status:"todo",due,publish,createdAt:iso(),updatedAt:iso(),
     updatedBy:me.uid,reviewRequired:review,approvalState:review?"pending":"not_required",
@@ -745,7 +755,7 @@ async function handleAction(action,key) {
   if(action==="task")return openTaskDetail(key);
   if(action==="new-task")return openTaskForm();
   if(action==="edit-task"){closeModal();return openTaskForm(key);}
-  if(action==="clear-filter"){ui.filter="";return render();}
+  if(action==="clear-filter"){ui.filter="";ui.staffFilter="";return render();}
   if(action==="new-plan")return openPlanNew();
   if(action==="plan")return openPlanDetail(key);
   if(action==="remove-plan-item")return removePlanItem(key);
@@ -787,6 +797,8 @@ document.addEventListener("input",e=>{
   }
 });
 document.addEventListener("change",e=>{
+  if(e.target.id==="staffTaskFilter"){ui.staffFilter=e.target.value;render();}
+  if(e.target.id==="kpiEmployeeSelect"){ui.kpiEmployee=e.target.value;render();}
   if(e.target.name==="mode"&&e.target.closest("#scheduleForm")) setScheduleTimeVisibility(e.target.form);
   if(e.target.name==="type"&&e.target.closest("#planForm")){
     const form=e.target.form;
@@ -853,7 +865,7 @@ function initFirebase(){
       closeModal();return;
     }
     const email=trim(user.email).toLowerCase();
-    if(!user.emailVerified||![managerEmail,staffEmail].includes(email)){
+    if(!user.emailVerified||(email!==managerEmail&&!staffEmails.includes(email))){
       $("login-error").textContent="Email này chưa được cấp quyền truy cập.";
       await signOut(auth);return;
     }
@@ -861,7 +873,7 @@ function initFirebase(){
     $("app").classList.remove("hidden");
     $("login").classList.add("hidden");
     $("userLabel").textContent=(manager()?"Giám đốc":"Nhân viên")+" · "+email;
-    ui.view="dashboard";ui.week=nowWeek();
+    ui.view="dashboard";ui.week=nowWeek();if(!staffEmails.includes(ui.kpiEmployee))ui.kpiEmployee=staffEmails[0];
     render();
     subscriptions();
   });
