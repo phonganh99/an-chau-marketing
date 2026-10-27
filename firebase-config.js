@@ -6,5 +6,6 @@ window.ANCHAU_CONFIG = {
   appId: '1:962007907238:web:ee8a5cb3e66af0f1796d67',
   messagingSenderId: '962007907238',
   managerEmail: 'phonganh99@gmail.com',
-  staffEmail: 'phongspotify00@gmail.com'
+  staffEmail: 'phongspotify00@gmail.com',
+  staffEmails: ['phongspotify00@gmail.com', 'hathu0374@gmail.com']
 };
