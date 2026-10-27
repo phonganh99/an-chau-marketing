@@ -273,7 +273,7 @@ async function saveTaskForm(form) {
     newTask.producedAt="";newTask.publications=[];
   }
   if(old){
-    if(manager() && old.assigneeEmail && old.assigneeEmail!==newTask.assigneeEmail && (old.producedAt || (old.publications||[]).length || old.status==="done")) return toast("Không chuyển người phụ trách sau khi đã ghi nhận sản lượng. Hãy tạo công việc mới cho người nhận.");
+    if(manager() && taskAssignee(old)!==newTask.assigneeEmail && (old.producedAt || (old.publications||[]).length || old.status==="done")) return toast("Không chuyển người phụ trách sau khi đã ghi nhận sản lượng. Hãy tạo công việc mới cho người nhận.");
     const changedCore=old.title!==newTask.title||old.description!==newTask.description||old.category!==newTask.category||old.channel!==newTask.channel;
     if(changedCore&&needsReview({...old,...newTask})){newTask.reviewRequired=true;newTask.approvalState="pending";}
   }
