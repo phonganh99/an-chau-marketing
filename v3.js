@@ -95,6 +95,14 @@ function subscriptions() {
       appData[key]=snapshot.docs.map(d=>({...d.data(),id:d.id}));
       syncState[key]={status:"ready",code:""};
       render();
+      if(key==="tasks" && window.location.hash.startsWith("#task=")) {
+        let taskId="";
+        try{taskId=decodeURIComponent(window.location.hash.slice(6));}catch{}
+        if(taskId && taskById(taskId)){
+          history.replaceState(null,"",window.location.pathname+window.location.search);
+          openTaskDetail(taskId);
+        }
+      }
       if(key==="plans" && staff()) generateRecurring().catch(e=>console.warn("Lịch lặp:",e));
     },e=>{
       console.warn("Firestore",col,e);
