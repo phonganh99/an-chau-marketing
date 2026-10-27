@@ -60,7 +60,15 @@ async function verifiedUser(req, env) {
     const data = await response.json();
     googleCerts = {keys: data.keys || [], expires: Date.now() + 30 * 60 * 1000};
   }
-  const jwk = googleCerts.keys.find(k => k.kid === header.kid && k.kty === "RSA");
+  let jwk = googleCerts.keys.find(k => k.kid === header.kid && k.kty === "RSA");
+  if (!jwk) {
+    googleCerts = null;
+    const response = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+    if (!response.ok) throw Error("Unable to refresh Firebase signing keys");
+    const data = await response.json();
+    googleCerts = {keys: data.keys || [], expires: Date.now() + 30 * 60 * 1000};
+    jwk = googleCerts.keys.find(k => k.kid === header.kid && k.kty === "RSA");
+  }
   if (!jwk) throw Error("Unrecognized Firebase signing key");
   const key = await crypto.subtle.importKey("jwk", jwk, {name: "RSASSA-PKCS1-v1_5", hash: "SHA-256"}, false, ["verify"]);
   if (!await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, fromBase64url(parts[2]), encoder.encode(parts[0] + "." + parts[1]))) throw Error("Token signature invalid");
@@ -180,9 +188,13 @@ async function sendOnce(env, key, email, text) {
   try {
     await botMessage(env, linked.chat_id, text);
     await env.DB.prepare("UPDATE deliveries SET status='sent',updated_ms=? WHERE id=?").bind(Date.now(), key).run();
+    await env.DB.prepare("DELETE FROM pending_notifications WHERE id=?").bind(key).run();
     return true;
   } catch (err) {
     await env.DB.prepare("UPDATE deliveries SET status='retry',updated_ms=? WHERE id=?").bind(Date.now(), key).run();
+    await env.DB.prepare("INSERT INTO pending_notifications(id,email,text,status,attempts,updated_ms) VALUES(?,?,?,'retry',1,?) " +
+      "ON CONFLICT(id) DO UPDATE SET status='retry',attempts=attempts+1,updated_ms=excluded.updated_ms")
+      .bind(key,email,text,Date.now()).run();
     console.error("Unable to deliver Telegram message", String(err));
     return false;
   }
@@ -226,14 +238,17 @@ async function processEvents(env) {
 async function retryFailed(env) {
   // Retries are stored in D1, not reconstructed from old Firestore events.
   // A failed original Telegram send is safe to retry after the next cron interval.
-  const pending = await env.DB.prepare("SELECT id,email,chat_id,text FROM pending_notifications WHERE status='retry' AND attempts<5 ORDER BY updated_ms LIMIT 20").all();
+  const pending = await env.DB.prepare("SELECT id,email,text FROM pending_notifications WHERE status='retry' AND attempts<5 AND updated_ms<? ORDER BY updated_ms LIMIT 20").bind(Date.now()-5*60*1000).all();
   for (const row of (pending.results || [])) {
     const sent = await sendOnce(env, row.id, row.email, row.text);
     if (sent) await env.DB.prepare("DELETE FROM pending_notifications WHERE id=?").bind(row.id).run();
-    else await env.DB.prepare("UPDATE pending_notifications SET attempts=attempts+1,updated_ms=? WHERE id=?").bind(Date.now(), row.id).run();
+    // sendOnce logs a retry only after a real attempted send; do not double count skipped leases.
   }
 }
-const vnDate = (d) => DATE_FORMAT.format(d);
+const vnDate = (d) => {
+  const parts = Object.fromEntries(DATE_FORMAT.formatToParts(d).map(x => [x.type, x.value]));
+  return parts.year + "-" + parts.month + "-" + parts.day;
+};
 const dayGap = (due, current) => Math.round((Date.parse(due + "T00:00:00Z") - Date.parse(current + "T00:00:00Z")) / 86400000);
 async function processReminders(env) {
   const day = vnDate(new Date());
