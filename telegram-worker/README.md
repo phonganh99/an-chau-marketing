@@ -22,16 +22,15 @@ không dùng Firebase Admin SDK và không thay đổi Firestore Rules khi chỉ
 ## 2. Tạo Cloudflare Workers Free / D1
 1. Đăng ký https://dash.cloudflare.com/ bằng gói Free.
 2. Cài Node 20+ trên máy có thể chạy lệnh, mở terminal ở thư mục `telegram-worker`.
-3. Chạy:
+3. D1 `anchau_mkt` đã được tạo trên Cloudflare Dashboard (ID: `2763c04a-205e-4d97-a3d4-665abfc221ea`). Cài đặt CLI khi cần triển khai Worker:
    ```
    npm install
    npx wrangler login
-   npx wrangler d1 create an-chau-telegram
    ```
-4. Lấy `database_id` hiển thị và thay dòng `database_id` trong `wrangler.toml`.
+4. `database_id` đã được cập nhật đúng vào `wrangler.toml`.
 5. Chạy:
    ```
-   npx wrangler d1 migrations apply an-chau-telegram --remote
+   npx wrangler d1 migrations apply anchau_mkt --remote
    ```
 6. Chỉnh `BOT_USERNAME` trong `wrangler.toml` theo username bot (không có @).
 
