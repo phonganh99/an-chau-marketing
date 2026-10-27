@@ -9,5 +9,5 @@ window.ANCHAU_CONFIG = {
   staffEmail: 'phongspotify00@gmail.com',
   staffEmails: ['phongspotify00@gmail.com', 'hathu0374@gmail.com'],
   // Worker public endpoint (not a secret). Set after deploying on Cloudflare:
-  telegramWorkerUrl: ''
+  telegramWorkerUrl: 'https://an-chau-telegram.phonganh99.workers.dev'
 };
