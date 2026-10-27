@@ -579,7 +579,11 @@ function renderCalendar() {
 function setScheduleTimeVisibility(form) {
   if(!form)return;
   const off=form.elements.mode?.value==="off";
-  form.querySelectorAll(".schedule-time-field").forEach(x=>x.classList.toggle("hidden",off));
+  form.querySelectorAll(".schedule-time-field").forEach(x=>{
+    x.classList.toggle("hidden",off);
+    const input=x.querySelector("input");
+    if(input){input.disabled=off;input.required=!off;}
+  });
 }
 function openSchedule(date=today()) {
   const selected=cleanDate(date)||today();
