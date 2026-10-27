@@ -1,0 +1,22 @@
+name = "an-chau-telegram"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+FIREBASE_PROJECT_ID = "an-chau-marketing"
+MANAGER_EMAIL = "phonganh99@gmail.com"
+STAFF_EMAILS = "phongspotify00@gmail.com,hathu0374@gmail.com"
+APP_ORIGIN = "https://phonganh99.github.io"
+APP_URL = "https://phonganh99.github.io/an-chau-marketing/v3.html"
+BOT_USERNAME = "REPLACE_WITH_BOT_USERNAME"
+PUBLIC_WORKER_URL = "https://REPLACE_WITH_WORKER_SUBDOMAIN.workers.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "an-chau-telegram"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/5 * * * *", "0 2 * * *"]
