@@ -37,15 +37,23 @@ const needsReview = (task) => {
 };
 
 const appData = { tasks:[],plans:[],schedules:[],messages:[],events:[],reports:[],notes:[],kpi:null };
-const ui = {view:"dashboard",month:today().slice(0,7), week:weekStart(), filter:"", layers:{work:true,due:true,post:true}, planType:"week"};
+const ui = {view:"dashboard",month:today().slice(0,7), week:weekStart(), filter:"", staffFilter:"", kpiEmployee:"phongspotify00@gmail.com", layers:{work:true,due:true,post:true}, planType:"week"};
 let auth,db,me=null,role=null,unsubs=[],toastTimer=null;
 const syncState = {};
 const managerEmail = trim(CONFIG.managerEmail).toLowerCase();
 const staffEmail = trim(CONFIG.staffEmail).toLowerCase();
+const staffEmails = [...new Set((Array.isArray(CONFIG.staffEmails)&&CONFIG.staffEmails.length?CONFIG.staffEmails:[CONFIG.staffEmail]).map(x=>trim(x).toLowerCase()).filter(Boolean))];
+const staffLabels = {"phongspotify00@gmail.com":"Nhân viên 1","hathu0374@gmail.com":"Nhân viên 2"};
+const staffLabel = email => staffLabels[email] || (email||"Nhân viên Marketing");
+const taskAssignee = t => trim(t?.assigneeEmail || (t?.source==="self" && t?.createdByEmail) || staffEmails[0] || "").toLowerCase();
+const myTasks = () => appData.tasks.filter(t=>manager() || taskAssignee(t)===trim(me?.email).toLowerCase());
+const taskOwnerDisplay = t => staffLabel(taskAssignee(t));
+const employeeOptions = () => staffEmails.map(email=>[email,staffLabel(email)+" · "+email]);
+const selectedEmployee = () => manager()?ui.kpiEmployee:trim(me?.email).toLowerCase();
 const manager = () => role === "manager";
 const staff = () => role === "staff";
-const ownerName = () => "Nhân viên Marketing";
-const taskById = (key) => appData.tasks.find(t=>t.id===key);
+const ownerName = () => staffLabel(me?.email || staffEmails[0]);
+const taskById = (key) => myTasks().find(t=>t.id===key);
 const nowWeek = () => weekStart();
 const isLate = (t) => t.status!=="done"&&t.status!=="cancelled"&&t.due&&t.due<today();
 const pill = (label,style="") => `<span class="pill ${style}">${safe(label)}</span>`;
@@ -142,23 +150,25 @@ function render() {
 }
 function taskName(t) {return `<button class="task-title" data-action="task" data-id="${safe(t.id)}">${safe(t.title)}</button>`;}
 function taskLine(t) {
-  return `<div class="item-line"><div class="fill">${taskName(t)}<small>${safe(t.channel||"Nội bộ")} · ${safe(t.owner||ownerName())} · Hạn ${fmt(t.due)} · ${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Theo kế hoạch":"Giám đốc giao")}</small></div>${pill(statusLabels[t.status]||"Chưa cập nhật",isLate(t)?"bad":t.status==="review"?"warn":t.status==="done"?"good":"")}</div>`;
+  return `<div class="item-line"><div class="fill">${taskName(t)}<small>${safe(t.channel||"Nội bộ")} · ${safe(taskOwnerDisplay(t))} · Hạn ${fmt(t.due)} · ${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Theo kế hoạch":"Giám đốc giao")}</small></div>${pill(statusLabels[t.status]||"Chưa cập nhật",isLate(t)?"bad":t.status==="review"?"warn":t.status==="done"?"good":"")}</div>`;
 }
 function weekTasks(start=nowWeek()) {
   const end=addDays(start,7);
   return appData.tasks.filter(t=>t.status!=="cancelled" && ((t.producedAt>=start&&t.producedAt.slice(0,10)<end)||(t.publishedAt>=start&&t.publishedAt.slice(0,10)<end)||(t.due>=start&&t.due<end)||(t.publish>=start&&t.publish<end)));
 }
-function weekStats(start=ui.week) {
+function weekStats(start=ui.week,email=selectedEmployee()) {
   const end=addDays(start,7);
-  const all=appData.tasks.filter(t=>t.status!=="cancelled");
-  const produced = all.filter(t=>t.producedAt && vietnamDay(t.producedAt)>=start && vietnamDay(t.producedAt)<end);
-  const pubs = all.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt && vietnamDay(p.publishedAt)>=start && vietnamDay(p.publishedAt)<end);
-  const targets = targetForWeek(start);
-  return channels.map(channel => {
-    const p=produced.filter(t=>t.channel===channel).length;
-    const x=pubs.filter(pub=>pub.channel===channel).length;
-    return {channel,produced:p,published:x,produceTarget:Math.max(0,Number(targets[channel]?.produce)||0),publishTarget:Math.max(0,Number(targets[channel]?.publish)||0)};
-  });
+  const assigned=appData.tasks.filter(t=>t.status!=="cancelled"&&taskAssignee(t)===email);
+  const produced=assigned.filter(t=>t.producedAt&&vietnamDay(t.producedAt)>=start&&vietnamDay(t.producedAt)<end);
+  const pubs=assigned.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt&&vietnamDay(p.publishedAt)>=start&&vietnamDay(p.publishedAt)<end);
+  const targets=targetForWeek(start,email);
+  return channels.map(channel=>({
+    channel,
+    produced:produced.filter(t=>t.channel===channel).length,
+    published:pubs.filter(p=>p.channel===channel).length,
+    produceTarget:Math.max(0,Number(targets[channel]?.produce)||0),
+    publishTarget:Math.max(0,Number(targets[channel]?.publish)||0)
+  }));
 }
 function kpiCard(k) {
   const bar=(value,target)=>`<div class="progress"><i class="${target&&value>=target?"ok":""}" style="width:${target?Math.min(100,value/target*100):0}%"></i></div>`;
@@ -171,11 +181,11 @@ function waitingQuestions() {
   });
 }
 function renderDashboard() {
-  const tasks=appData.tasks.filter(t=>t.status!=="cancelled");
+  const tasks=myTasks().filter(t=>t.status!=="cancelled");
   const due=tasks.filter(t=>t.status!=="done"&&t.due<=addDays(today(),2)).sort((a,b)=>(a.due||"").localeCompare(b.due||"")).slice(0,8);
   const review=tasks.filter(t=>t.status==="review");
   const questions=waitingQuestions();
-  const week=weekStats(nowWeek());
+  const week=manager()?staffEmails.map(email=>({email,rows:weekStats(nowWeek(),email)})):[{email:me.email,rows:weekStats(nowWeek(),me.email)}];
   const total=tasks.length;
   const metrics=manager() ?
     [metric("Chờ duyệt",review.length,"Sản phẩm chờ kiểm tra"),metric("Cần phản hồi",questions.length,"Câu hỏi về công việc"),metric("Việc quá hạn",tasks.filter(isLate).length,"Cần theo dõi"),metric("Công việc đã hoàn thành",tasks.filter(t=>t.status==="done").length,`${total} công việc`)]:
@@ -184,7 +194,8 @@ function renderDashboard() {
     <div class="split"><section class="card"><div class="section-head"><h2>${manager()?"Cần tôi xử lý":"Việc cần ưu tiên"}</h2>${btn("Xem tất cả","go",manager()?"inbox":"tasks")}</div>
       ${manager()?(review.length?review.map(taskLine).join(""):"")+questions.map(taskLine).join("")||empty("Không có yêu cầu đang chờ.") : due.length?due.map(taskLine).join(""):empty("Chưa có việc cần ưu tiên.")}
     </section><section class="card"><div class="section-head"><h2>KPI tuần này</h2>${btn("Chi tiết","go","kpi")}</div>
-      ${week.map(k=>`<div class="kpi-row"><div class="header"><b>${k.channel}</b><span>SX ${k.produced}/${k.produceTarget||"—"} · Đăng ${k.published}/${k.publishTarget||"—"}</span></div></div>`).join("")}
+      ${week.map(person=>`<div class="kpi-row"><div class="header"><b>${safe(staffLabel(person.email))}</b><span>${safe(person.email)}</span></div>
+   ${person.rows.map(k=>`<div class="header" style="padding:4px 0"><span>${safe(k.channel)}</span><span>SX ${k.produced}/${k.produceTarget||"—"} · Đăng ${k.published}/${k.publishTarget||"—"}</span></div>`).join("")}</div>`).join("")}
       <div class="notice">KPI ghi nhận theo số lượng sản phẩm và lượt đăng thực tế, tách riêng từng kênh.</div>
     </section></div>
     <section class="card"><div class="section-head"><h2>Hành động nhanh</h2></div><div class="button-row">${btn(manager()?"＋ Giao việc":"＋ Tự tạo việc","new-task","","primary")}${btn("Lập kế hoạch","go","plans")}${btn("Lịch Marketing","go","calendar")}${manager()?btn("Thiết lập KPI","go","settings"):""}</div></section>
@@ -202,11 +213,11 @@ function renderInbox() {
 }
 function renderTasks() {
   const q=ui.filter.trim().toLowerCase();
-  const filtered=appData.tasks.filter(t=>!q||[t.title,t.owner,t.channel,t.description,t.category].join(" ").toLowerCase().includes(q)).sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
+  const filtered=myTasks().filter(t=>(!ui.staffFilter||!manager()||taskAssignee(t)===ui.staffFilter)&&(!q||[t.title,t.owner,taskAssignee(t),t.channel,t.description,t.category].join(" ").toLowerCase().includes(q))).sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
   return `<div class="head-actions"><p class="sub">Công việc được giao, tự tạo và tự sinh từ kế hoạch. Công việc đã hủy vẫn được giữ để đối chiếu lịch sử.</p>${btn(manager()?"＋ Giao việc mới":"＋ Tự tạo công việc","new-task","","primary")}</div>
-    <div class="filters"><input id="searchTask" placeholder="Tìm công việc / kênh / người phụ trách" value="${safe(ui.filter)}" aria-label="Tìm công việc">${btn("Xóa lọc","clear-filter")}</div>
+    <div class="filters"><input id="searchTask" placeholder="Tìm công việc / kênh / người phụ trách" value="${safe(ui.filter)}" aria-label="Tìm công việc">${manager()?`<select id="staffTaskFilter" aria-label="Lọc theo nhân viên"><option value="">Tất cả nhân viên</option>${employeeOptions().map(([email,label])=>`<option value="${safe(email)}" ${ui.staffFilter===email?"selected":""}>${safe(label)}</option>`).join("")}</select>`:""}${btn("Xóa lọc","clear-filter")}</div>
     <div class="card table-wrap"><table class="table"><thead><tr><th>Công việc</th><th>Nguồn</th><th>Kênh</th><th>Deadline</th><th>Trạng thái</th><th></th></tr></thead><tbody>
-    ${filtered.map(t=>`<tr><td>${taskName(t)}<div class="tag">${safe(t.owner||ownerName())}</div></td><td>${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Kế hoạch":"Giám đốc giao")}</td><td>${safe(t.channel||"Nội bộ")}</td><td>${fmt(t.due)}</td><td>${pill(statusLabels[t.status]||"—",isLate(t)?"bad":t.status==="done"?"good":t.status==="review"?"warn":"")}</td><td>${btn("Mở","task",t.id)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("Chưa có công việc.")}</td></tr>`}</tbody></table></div>`;
+    ${filtered.map(t=>`<tr><td>${taskName(t)}<div class="tag">${safe(taskOwnerDisplay(t))} · ${safe(taskAssignee(t))}</div></td><td>${safe(t.source==="self"?"Tự tạo":t.source==="plan"?"Kế hoạch":"Giám đốc giao")}</td><td>${safe(t.channel||"Nội bộ")}</td><td>${fmt(t.due)}</td><td>${pill(statusLabels[t.status]||"—",isLate(t)?"bad":t.status==="done"?"good":t.status==="review"?"warn":"")}</td><td>${btn("Mở","task",t.id)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("Chưa có công việc.")}</td></tr>`}</tbody></table></div>`;
 }
 
 function taskForm(t=null) {
@@ -219,7 +230,7 @@ function taskForm(t=null) {
   if(t?.channel&&!allowedChannels.includes(t.channel))allowedChannels.push(t.channel);
   return `<form id="taskForm" data-task-id="${safe(t?.id||"")}" class="form-grid">
     <div class="full">${field("title","Tên công việc *",name,"text",'required maxlength="160"')}</div>
-    ${manager()?field("owner","Người thực hiện *",owner,"text",'required maxlength="70"'):""}
+    ${manager()?select("assigneeEmail","Người phụ trách *",employeeOptions(),taskAssignee(t)):""}
     ${select("category","Nhóm công việc",categories.map(x=>[x,x]),t?.category||"Content")}
     ${select("channel","Kênh",allowedChannels.map(x=>[x,x]),t?.channel||"TikTok")}
     ${select("priority","Ưu tiên",[["high","Cao"],["medium","Trung bình"],["low","Thấp"]],t?.priority||"medium")}
@@ -242,24 +253,27 @@ async function saveTaskForm(form) {
   if(old&&!manager()&&!(old.source==="self"&&old.createdBy===me.uid))return toast("Không đủ quyền chỉnh sửa.");
   const val=(key)=>trim(form.elements[key]?.value||"");
   const newTask={
-    title:val("title"),owner:manager()?val("owner"):ownerName(),category:val("category"),
+    title:val("title"),assigneeEmail:manager()?val("assigneeEmail"):trim(me.email).toLowerCase(),category:val("category"),
     channel:val("channel"),priority:val("priority"),due:val("due"),publish:val("publish"),
     description:val("description"),updatedAt:iso(),updatedBy:me.uid
   };
-  if(!newTask.title||!newTask.owner||!cleanDate(newTask.due))return toast("Vui lòng điền tên việc, người phụ trách và deadline.");
+  newTask.owner=staffLabel(newTask.assigneeEmail);
+  if(!staffEmails.includes(newTask.assigneeEmail))return toast("Chỉ được giao việc cho nhân viên đã được cấp quyền.");
+  if(!newTask.title||!cleanDate(newTask.due))return toast("Vui lòng điền tên việc, người phụ trách và deadline.");
   if(newTask.publish&&!cleanDate(newTask.publish))return toast("Ngày đăng không hợp lệ.");
   if(manager()){
     newTask.status=val("status")||"todo";
     if(!statusLabels[newTask.status])return toast("Trạng thái không hợp lệ.");
   }
   if(!old){
-    newTask.createdAt=iso();newTask.createdBy=me.uid;newTask.source=manager()?"assigned":"self";
+    newTask.createdAt=iso();newTask.createdBy=me.uid;newTask.createdByEmail=trim(me.email).toLowerCase();newTask.source=manager()?"assigned":"self";
     newTask.id=id("MK");newTask.status=newTask.status||"todo";
     newTask.reviewRequired=needsReview(newTask);
     newTask.approvalState=newTask.reviewRequired?"pending":"not_required";
     newTask.producedAt="";newTask.publications=[];
   }
   if(old){
+    if(manager() && old.assigneeEmail && old.assigneeEmail!==newTask.assigneeEmail && (old.producedAt || (old.publications||[]).length || old.status==="done")) return toast("Không chuyển người phụ trách sau khi đã ghi nhận sản lượng. Hãy tạo công việc mới cho người nhận.");
     const changedCore=old.title!==newTask.title||old.description!==newTask.description||old.category!==newTask.category||old.channel!==newTask.channel;
     if(changedCore&&needsReview({...old,...newTask})){newTask.reviewRequired=true;newTask.approvalState="pending";}
   }
@@ -307,7 +321,7 @@ function openTaskDetail(key) {
   const history=appData.events.filter(e=>e.taskId===t.id).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,30);
   const body=`<div class="stack">
     <div class="button-row">${pill(statusLabels[t.status]||"—",t.status==="done"?"good":t.status==="review"?"warn":"")}${pill(t.source==="self"?"Tự tạo":t.source==="plan"?"Từ kế hoạch":"Giám đốc giao","neutral")}${pill(t.channel||"Nội bộ","neutral")}</div>
-    <div class="sub">Phụ trách: <b>${safe(t.owner||ownerName())}</b> · Hạn: <b>${fmt(t.due)}</b> · Lịch đăng: <b>${fmt(t.publish)}</b></div>
+    <div class="sub">Phụ trách: <b>${safe(taskOwnerDisplay(t))}</b> (${safe(taskAssignee(t))}) · Hạn: <b>${fmt(t.due)}</b> · Lịch đăng: <b>${fmt(t.publish)}</b></div>
     <div class="notice"><b>Brief:</b> ${safe(t.description||"Chưa có yêu cầu bổ sung.")}</div>
     ${milestones}
     <div class="button-row">${actions}</div>
@@ -396,7 +410,7 @@ function planLine(p) {
     ${btn("Xem kế hoạch","plan",p.id)}</div>`;
 }
 function renderPlans() {
-  const plans=appData.plans.slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  const plans=appData.plans.filter(p=>manager()||p.ownerUid===me.uid).slice().sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
   return `<div class="head-actions"><p class="sub">Nhân viên chủ động lập kế hoạch tuần, tháng, chiến dịch hoặc việc lặp. Kích hoạt kế hoạch sẽ tự tạo công việc, không cần Giám đốc duyệt.</p>${staff()?btn("＋ Lập kế hoạch mới","new-plan","","primary"):""}</div>
   <div class="card"><div class="section-head"><h2>Kế hoạch Marketing</h2>${pill(plans.filter(p=>p.active).length+" đang triển khai")}</div>
   ${plans.map(planLine).join("")||empty("Chưa có kế hoạch nào. Nhân viên có thể bắt đầu lập kế hoạch.")}</div>
@@ -475,7 +489,7 @@ function planToTask(p,item,uniqueId,due,publish) {
   const stub={id:uniqueId,title:item.title,description:item.description||"",category:item.category||"Content"};
   const review=needsReview(stub);
   return {
-    id:uniqueId,title:item.title,owner:ownerName(),category:item.category||"Content",channel:item.channel,
+    id:uniqueId,title:item.title,owner:staffLabel(p.ownerEmail),assigneeEmail:trim(p.ownerEmail).toLowerCase(),createdByEmail:trim(p.ownerEmail).toLowerCase(),category:item.category||"Content",channel:item.channel,
     description:item.description||"",source:"plan",planId:p.id,planItemId:item.id,
     createdBy:p.ownerUid,priority:"medium",status:"todo",due,publish,createdAt:iso(),updatedAt:iso(),
     updatedBy:me.uid,reviewRequired:review,approvalState:review?"pending":"not_required",
@@ -543,8 +557,9 @@ const scheduleModeNames={office:"Văn phòng",remote:"Làm từ xa",field:"Đi q
 function scheduleChip(s,date) {
   const name=scheduleModeNames[s.mode]||"Lịch làm";
   const hours=s.mode==="off"?"Cả ngày":(s.start&&s.end?s.start+"–"+s.end:s.start||"Chưa có giờ");
-  const detail=[name,hours,s.note||""].filter(Boolean).join(" · ");
-  return `<button type="button" class="cal-chip work ${s.mode==="off"?"work-off":""}" title="${safe(fmt(date)+" · "+detail)}" data-action="schedule" data-id="${safe(date)}" aria-label="${safe(detail)}"><span class="schedule-mode">${safe(name)}</span><span class="schedule-hours">${safe(hours)}</span></button>`;
+  const person=staffLabel(s.ownerEmail||"");
+  const detail=[person,name,hours,s.note||""].filter(Boolean).join(" · ");
+  return `<button type="button" class="cal-chip work ${s.mode==="off"?"work-off":""}" title="${safe(fmt(date)+" · "+detail)}" data-action="schedule" data-id="${safe(date)}" aria-label="${safe(detail)}"><span class="schedule-mode">${safe(person)} · ${safe(name)}</span><span class="schedule-hours">${safe(hours)}</span></button>`;
 }
 function renderCalendar() {
   const [year,month]=ui.month.split("-").map(Number);
@@ -559,8 +574,8 @@ function renderCalendar() {
     const schedules=layers.work?appData.schedules.filter(x=>x.date===date):[];
     const entries=[
       ...schedules.map(x=>scheduleChip(x,date)),
-      ...(layers.due?appData.tasks.filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe("Hạn "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`):[]),
-      ...(layers.post?appData.tasks.filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe("Dự kiến đăng "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`):[])
+      ...(layers.due?myTasks().filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe("Hạn "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`):[]),
+      ...(layers.post?myTasks().filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe("Dự kiến đăng "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`):[])
     ];
     const hasMySchedule=appData.schedules.some(s=>s.date===date&&s.ownerUid===me.uid);
     html+=`<div class="day ${inside?"":"out"} ${date===today()?"today":""}"><span class="number">${dateFrom(date).getDate()}</span>
@@ -568,7 +583,7 @@ function renderCalendar() {
        ${staff()&&inside&&layers.work&&!hasMySchedule?`<button class="cal-chip add-work" data-action="schedule" data-id="${safe(date)}">＋ Đăng ký lịch</button>`:""}
        </div>`;
   }
-  const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>appData.tasks.filter(t=>t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
+  const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>myTasks().filter(t=>taskAssignee(t)===(s.ownerEmail||"").toLowerCase()&&t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
   return `<div class="toolbar"><p class="sub">Lịch làm hiển thị đầy đủ giờ bắt đầu–kết thúc và nằm riêng với lịch đăng, deadline. Nhân viên có thể thay đổi lịch làm bất cứ lúc nào.</p>${staff()?btn("＋ Đăng ký lịch làm","schedule",today(),"primary"):""}</div>
     <section class="card"><div class="toolbar"><div class="button-row">${btn("‹","cal-prev")}<strong>Tháng ${month}/${year}</strong>${btn("›","cal-next")}${btn("Hôm nay","cal-today")}</div>
     <div class="checkbox-row">${[["work","Lịch làm"],["due","Deadline"],["post","Lịch đăng"]].map(([k,label])=>`<label><input type="checkbox" data-layer="${k}" ${layers[k]?"checked":""}>${label}</label>`).join("")}</div></div>
@@ -591,7 +606,7 @@ function openSchedule(date=today()) {
   if(manager()){
     const records=appData.schedules.filter(s=>s.date===selected);
     return modal("Lịch làm · "+fmt(selected),`<div class="stack"><p class="sub">Lịch do nhân viên tự đăng ký; Giám đốc chỉ xem, không cần phê duyệt.</p>
-      ${records.map(s=>`<div class="list-card"><strong>${safe(s.ownerEmail||"Nhân viên")}</strong><p>${safe(scheduleModeNames[s.mode]||"Lịch làm")} · ${safe(s.mode==="off"?"Cả ngày":s.start+"–"+s.end)}</p><p>${safe(s.note||"")}</p></div>`).join("")||empty("Chưa có lịch làm cho ngày này.")}</div>`);
+      ${records.map(s=>`<div class="list-card"><strong>${safe(s.ownerEmail||"Nhân viên")}</strong><p>${safe(staffLabel(s.ownerEmail))} · ${safe(scheduleModeNames[s.mode]||"Lịch làm")} · ${safe(s.mode==="off"?"Cả ngày":s.start+"–"+s.end)}</p><p>${safe(s.note||"")}</p></div>`).join("")||empty("Chưa có lịch làm cho ngày này.")}</div>`);
   }
   if(!staff())return toast("Chỉ nhân viên được đăng ký lịch làm.");
   const isEdit=!!own;
@@ -618,24 +633,33 @@ async function saveSchedule(form) {
   if(ok){await logAction("schedule:"+date,"schedule_saved",mode+" · "+(mode==="off"?"Nghỉ":start+"–"+end));closeModal();}
 }
 
-function targetForWeek(start) {
+function targetForWeek(start,email=selectedEmployee()) {
   const history=appData.kpi?.history||[];
-  const prior=history.filter(h=>h.fromWeek<=start).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
-  return prior.length?prior[prior.length-1].targets:history.length?{}:appData.kpi?.targets||{};
+  const entries=history.filter(h=>h.fromWeek<=start && (h.employeeEmail===email || (!h.employeeEmail&&email===staffEmails[0]))).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
+  if(entries.length)return entries[entries.length-1].targets||{};
+  if(history.length)return {};
+  if(appData.kpi?.staffTargets?.[email])return appData.kpi.staffTargets[email];
+  return email===staffEmails[0]?appData.kpi?.targets||{}:{};
 }
 function kpiWeekView() {
-  return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div></div>`;
+  return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div>
+    ${manager()?`<select id="kpiEmployeeSelect" aria-label="Chọn nhân viên để xem KPI">${employeeOptions().map(([email,label])=>`<option value="${safe(email)}" ${ui.kpiEmployee===email?"selected":""}>${safe(label)}</option>`).join("")}</select>`:""}</div>`;
 }
-function reportId(start) {return "WR-"+start;}
-function weeklyReport(start) {return appData.reports.find(r=>r.id===reportId(start));}
-function employeeNote(start) {return appData.notes.find(n=>n.id===start+"_"+(staff()?me.uid:n.ownerUid));}
+function reportId(start,email=selectedEmployee()) {return "WR-"+start+"-"+email;}
+function weeklyReport(start,email=selectedEmployee()) {
+  return appData.reports.find(r=>r.id===reportId(start,email)) ||
+    (email===staffEmails[0]?appData.reports.find(r=>r.id==="WR-"+start):null);
+}
+function employeeNote(start,email=selectedEmployee()) {
+  return appData.notes.find(n=>n.week===start&&n.ownerEmail===email);
+}
 function renderKpi() {
   const stats=weekStats(ui.week),report=weeklyReport(ui.week),latest=(report?.versions||[]).slice(-1)[0];
   const current=JSON.stringify(stats);
   const changed=latest && JSON.stringify(latest.metrics)!==current;
-  const note=appData.notes.find(n=>n.week===ui.week);
-  const metrics=appData.tasks.filter(t=>t.status!=="cancelled"&&t.due>=ui.week&&t.due<addDays(ui.week,7));
-  return `<div class="stack">${kpiWeekView()}
+  const note=employeeNote(ui.week);
+  const metrics=appData.tasks.filter(t=>t.status!=="cancelled"&&taskAssignee(t)===selectedEmployee()&&t.due>=ui.week&&t.due<addDays(ui.week,7));
+  return `<div class="stack">${kpiWeekView()}<p class="sub">Đang xem kết quả của <b>${safe(staffLabel(selectedEmployee()))}</b> · ${safe(selectedEmployee())}</p>
     <div class="grid cols3">${stats.map(kpiCard).join("")}</div>
     <section class="card"><div class="section-head"><h2>Tổng hợp công việc theo tuần</h2>${pill(metrics.length+" việc có deadline")}</div>
       <div class="grid cols3">${metric("Hoàn thành",metrics.filter(t=>t.status==="done").length,"Theo deadline tuần")}${metric("Chưa hoàn thành",metrics.filter(t=>t.status!=="done").length,"Cần theo dõi")}${metric("Chờ duyệt",metrics.filter(t=>t.status==="review").length,"Chưa phản ánh KPI xuất bản")}</div>
@@ -668,9 +692,9 @@ async function saveWeeklyNote(form) {
 }
 function openWeeklyConfirm(week) {
   if(!manager())return;
-  const report=weeklyReport(week),latest=(report?.versions||[]).slice(-1)[0];
+  const report=weeklyReport(week,selectedEmployee()),latest=(report?.versions||[]).slice(-1)[0];
   const changed=latest&&JSON.stringify(latest.metrics)!==JSON.stringify(weekStats(week));
-  modal(latest?"Xác nhận điều chỉnh báo cáo":"Xác nhận báo cáo KPI",`<form id="weeklyConfirmForm" data-week="${safe(week)}" class="stack">
+  modal(latest?"Xác nhận điều chỉnh báo cáo":"Xác nhận báo cáo KPI",`<form id="weeklyConfirmForm" data-week="${safe(week)}" data-employee="${safe(selectedEmployee())}" class="stack">
     <div class="notice ${changed?"warn":""}">Kỳ ${fmt(week)}–${fmt(addDays(week,6))}. ${latest?changed?"Có thay đổi số liệu so với bản chốt trước.":"Số liệu chưa thay đổi; chỉ chốt bản mới khi có lý do.":"Chưa có bản chốt."}</div>
     ${txtarea("managerComment","Nhận xét của Giám đốc",latest?.managerComment||"")}
     ${txtarea("reason","Lý do xác nhận / điều chỉnh",latest?"":"Chốt đánh giá tuần")}
@@ -679,46 +703,63 @@ function openWeeklyConfirm(week) {
 async function confirmWeekly(form) {
   if(!manager())return;
   const week=form.dataset.week;
-  const ref=doc(db,collectionNames.reports,reportId(week));
+  const email=form.dataset.employee;
+  if(!staffEmails.includes(email))return toast("Tài khoản nhân viên không hợp lệ.");
+  const ref=doc(db,collectionNames.reports,reportId(week,email));
   const reason=trim(form.elements.reason.value,1200);
   if(!reason)return toast("Vui lòng nhập lý do để lưu lịch sử.");
-  const metrics=weekStats(week);
-  const report=weeklyReport(week),old=report?.versions||[];
+  const metrics=weekStats(week,email);
+  const report=weeklyReport(week,email),old=report?.versions||[];
   if(old.length>=50)return toast("Báo cáo đã có quá nhiều phiên bản. Cần lưu trữ phiên bản cũ.");
   const version={metrics,reason,managerComment:trim(form.elements.managerComment.value,4000),confirmedAt:iso(),confirmedBy:me.uid};
-  const payload={week,versions:[...old,version],updatedAt:iso(),updatedBy:me.uid};
+  const payload={week,employeeEmail:email,versions:[...old,version],updatedAt:iso(),updatedBy:me.uid};
   const ok=await doWrite(()=>setDoc(ref,payload),"Đã chốt báo cáo phiên bản V"+(old.length+1)+".");
   if(ok)closeModal();
 }
 function renderSettings() {
   if(!manager())return empty("Không đủ quyền truy cập.");
-  const targets=targetForWeek(nowWeek());
   return `<div class="stack">
-    <section class="card"><div class="section-head"><h2>Thiết lập KPI tối thiểu theo tuần</h2>${pill("Giám đốc quản lý")}</div>
-      <p class="sub">KPI theo từng kênh, tách số sản phẩm sản xuất và số lượt xuất bản. Chỉ tiêu mới áp dụng từ tuần hiện tại và không làm thay đổi KPI lịch sử.</p>
+    <section class="card">
+      <div class="section-head"><h2>KPI tối thiểu theo từng nhân viên</h2>${pill("Giám đốc quản lý")}</div>
+      <p class="sub">Mỗi người có chỉ tiêu sản xuất và xuất bản riêng cho TikTok, Facebook và Website. Chỉ tiêu thay đổi có lịch sử theo tuần.</p>
       <form id="kpiSettingsForm" class="stack">
-      <div class="table-wrap"><table class="table"><thead><tr><th>Kênh</th><th>Sản xuất / tuần</th><th>Xuất bản / tuần</th></tr></thead><tbody>
-      ${channels.map(c=>`<tr><td><b>${c}</b></td><td><div class="field"><input name="${c}_produce" aria-label="${c} sản xuất" type="number" min="0" max="999" value="${Number(targets[c]?.produce)||0}"></div></td>
-        <td><div class="field"><input name="${c}_publish" aria-label="${c} xuất bản" type="number" min="0" max="999" value="${Number(targets[c]?.publish)||0}"></div></td></tr>`).join("")}
-      </tbody></table></div><div class="button-row end"><button type="submit" class="btn primary">Lưu KPI tối thiểu</button></div></form>
+      ${staffEmails.map((email,index)=>{
+        const targets=targetForWeek(nowWeek(),email);
+        return `<div class="list-card"><h3>${safe(staffLabel(email))} · ${safe(email)}</h3>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Kênh</th><th>Sản xuất / tuần</th><th>Xuất bản / tuần</th></tr></thead><tbody>
+          ${channels.map(c=>`<tr><td><b>${safe(c)}</b></td>
+            <td><div class="field"><input name="staff${index}_${c}_produce" type="number" min="0" max="999" value="${Number(targets[c]?.produce)||0}" aria-label="Sản xuất ${safe(c)} ${safe(email)}"></div></td>
+            <td><div class="field"><input name="staff${index}_${c}_publish" type="number" min="0" max="999" value="${Number(targets[c]?.publish)||0}" aria-label="Xuất bản ${safe(c)} ${safe(email)}"></div></td></tr>`).join("")}
+          </tbody></table></div></div>`;
+      }).join("")}
+      <div class="button-row end"><button type="submit" class="btn primary">Lưu KPI cả hai nhân viên</button></div></form>
+    </section>
+    <section class="card"><h2>Nhân sự Marketing</h2>
+      ${staffEmails.map(email=>`<div class="item-line"><div class="fill"><b>${safe(staffLabel(email))}</b><small>${safe(email)}</small></div><span class="pill good">Được cấp quyền V3</span></div>`).join("")}
+      <p class="sub">Người phụ trách được chọn bằng email trong form giao việc. Công việc cũ chưa có email mặc định thuộc Nhân viên 1 và có thể được Giám đốc phân công lại.</p>
     </section>
     <section class="card"><h2>Quy tắc duyệt nội dung</h2><p class="sub">Tự nhận diện các nội dung nhạy cảm liên quan visa, học phí, chi phí, tuyển sinh, cam kết hoặc quảng cáo. Giám đốc có quyền bật duyệt thủ công trên bất kỳ công việc nào. Nội dung không thuộc nhóm này không cần duyệt trước khi ghi nhận đã đăng.</p><div class="notice warn">Đây là bộ lọc từ khóa cơ bản, không thay thế kiểm tra pháp lý hoặc kiểm duyệt nội dung. Nhân viên không thể tự xác nhận “Đã duyệt”.</div></section>
     <section class="card"><h2>Sao lưu dữ liệu</h2><p class="sub">Tải dữ liệu hiện có để có bản dự phòng trước khi chuyển phiên bản.</p><div class="button-row">${btn("↓ Sao lưu JSON","backup-json")}${btn("↓ Xuất CSV công việc","backup-csv")}</div></section>
-    <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, hai người chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
+    <section class="card"><h2>Telegram Bot – Kết nối an toàn</h2><p class="sub">Đã thống nhất gửi thông báo riêng theo vai trò. V3 chưa gửi Telegram thật: cần Bot Token, Giám đốc và hai nhân viên chủ động kết nối bot và một dịch vụ máy chủ lưu token bí mật. Không nhập token trực tiếp trên GitHub Pages hoặc trong trình duyệt.</p><div class="notice">Các sự kiện giao việc, phản hồi, gửi duyệt được ghi trong nhật ký Firestore, làm nguồn cho bộ gửi thông báo sau khi cấu hình dịch vụ nền.</div></section>
   </div>`;
 }
+
 async function saveTargets(form) {
   if(!manager())return;
-  const targets={};
-  for(const channel of channels) {
-    const produce=Number(form.elements[channel+"_produce"].value),publish=Number(form.elements[channel+"_publish"].value);
-    if(!Number.isInteger(produce)||produce<0||produce>999||!Number.isInteger(publish)||publish<0||publish>999)return toast("KPI phải là số nguyên trong khoảng 0–999.");
-    targets[channel]={produce,publish};
+  const fromWeek=nowWeek(),staffTargets={},history=[...(appData.kpi?.history||[])].filter(h=>h.fromWeek!==fromWeek);
+  for(let index=0;index<staffEmails.length;index++){
+    const email=staffEmails[index],targets={};
+    for(const channel of channels){
+      const produce=Number(form.elements["staff"+index+"_"+channel+"_produce"].value),publish=Number(form.elements["staff"+index+"_"+channel+"_publish"].value);
+      if(!Number.isInteger(produce)||produce<0||produce>999||!Number.isInteger(publish)||publish<0||publish>999)return toast("KPI phải là số nguyên từ 0 đến 999.");
+      targets[channel]={produce,publish};
+    }
+    staffTargets[email]=targets;
+    history.push({fromWeek,employeeEmail:email,targets,updatedBy:me.uid,updatedAt:iso()});
   }
-  const fromWeek=nowWeek();
-  const history=(appData.kpi?.history||[]).filter(x=>x.fromWeek!==fromWeek);
-  const payload={targets,history:[...history,{fromWeek,targets,updatedBy:me.uid,updatedAt:iso()}].sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek)),updatedAt:iso(),updatedBy:me.uid};
-  await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI theo kênh.");
+  history.sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
+  const payload={...appData.kpi,staffTargets,history,updatedAt:iso(),updatedBy:me.uid};
+  await doWrite(()=>setDoc(doc(db,collectionNames.kpi,"weekly"),payload),"Đã cập nhật KPI riêng cho từng nhân viên.");
 }
 
 function downloadData(data,name,type){
@@ -745,7 +786,7 @@ async function handleAction(action,key) {
   if(action==="task")return openTaskDetail(key);
   if(action==="new-task")return openTaskForm();
   if(action==="edit-task"){closeModal();return openTaskForm(key);}
-  if(action==="clear-filter"){ui.filter="";return render();}
+  if(action==="clear-filter"){ui.filter="";ui.staffFilter="";return render();}
   if(action==="new-plan")return openPlanNew();
   if(action==="plan")return openPlanDetail(key);
   if(action==="remove-plan-item")return removePlanItem(key);
@@ -787,6 +828,8 @@ document.addEventListener("input",e=>{
   }
 });
 document.addEventListener("change",e=>{
+  if(e.target.id==="staffTaskFilter"){ui.staffFilter=e.target.value;render();}
+  if(e.target.id==="kpiEmployeeSelect"){ui.kpiEmployee=e.target.value;render();}
   if(e.target.name==="mode"&&e.target.closest("#scheduleForm")) setScheduleTimeVisibility(e.target.form);
   if(e.target.name==="type"&&e.target.closest("#planForm")){
     const form=e.target.form;
@@ -853,7 +896,7 @@ function initFirebase(){
       closeModal();return;
     }
     const email=trim(user.email).toLowerCase();
-    if(!user.emailVerified||![managerEmail,staffEmail].includes(email)){
+    if(!user.emailVerified||(email!==managerEmail&&!staffEmails.includes(email))){
       $("login-error").textContent="Email này chưa được cấp quyền truy cập.";
       await signOut(auth);return;
     }
@@ -861,7 +904,7 @@ function initFirebase(){
     $("app").classList.remove("hidden");
     $("login").classList.add("hidden");
     $("userLabel").textContent=(manager()?"Giám đốc":"Nhân viên")+" · "+email;
-    ui.view="dashboard";ui.week=nowWeek();
+    ui.view="dashboard";ui.week=nowWeek();if(!staffEmails.includes(ui.kpiEmployee))ui.kpiEmployee=staffEmails[0];
     render();
     subscriptions();
   });
