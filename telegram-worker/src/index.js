@@ -203,6 +203,10 @@ function eventNotification(env, event, task) {
   const subject = String(task?.title || "Công việc").slice(0, 140);
   const link = env.APP_URL + "#task=" + encodeURIComponent(task.id);
   if (event.type === "task_created" && task.source === "assigned") return {email: person, text: "AN CHÂU · Việc mới được giao\n" + subject + "\nHạn: " + (task.due || "Chưa có") + "\n" + link};
+  if (event.type === "accept-task" && task.source === "assigned" && String(event.actorEmail || "").toLowerCase() === person) {
+    const employee = person === "hathu0374@gmail.com" ? "Nhân viên 2 (Hà Thu)" : person === "phongspotify00@gmail.com" ? "Nhân viên 1" : person;
+    return {email: manager, text: "AN CHÂU · Nhân viên đã nhận việc\n" + employee + "\nCông việc: " + subject + "\nHạn: " + (task.due || "Chưa có") + "\n" + link};
+  }
   if (event.type === "message" && event.detail === "question") return {email: manager, text: "AN CHÂU · Nhân viên hỏi lại yêu cầu\n" + subject + "\nMở công việc: " + link};
   if (event.type === "message" && event.detail === "reply") return {email: person, text: "AN CHÂU · Có phản hồi cho công việc\n" + subject + "\n" + link};
   if (event.type === "submit-review") return {email: manager, text: "AN CHÂU · Nội dung cần duyệt\n" + subject + "\n" + link};
@@ -367,7 +371,7 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname, c = cors(request, env);
     try {
-      if (request.method === "GET" && path === "/health") return json({ok:true,service:"an-chau-telegram",version:"1.0.1"});
+      if (request.method === "GET" && path === "/health") return json({ok:true,service:"an-chau-telegram",version:"1.0.2"});
       if (path === "/telegram/webhook" && request.method === "POST") return handleWebhook(env, request);
       if (path.startsWith("/api/")) {
         if (request.method === "OPTIONS") return withCors(new Response(null,{status:204}), c);
