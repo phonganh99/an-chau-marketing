@@ -156,17 +156,19 @@ function weekTasks(start=nowWeek()) {
   const end=addDays(start,7);
   return appData.tasks.filter(t=>t.status!=="cancelled" && ((t.producedAt>=start&&t.producedAt.slice(0,10)<end)||(t.publishedAt>=start&&t.publishedAt.slice(0,10)<end)||(t.due>=start&&t.due<end)||(t.publish>=start&&t.publish<end)));
 }
-function weekStats(start=ui.week) {
+function weekStats(start=ui.week,email=selectedEmployee()) {
   const end=addDays(start,7);
-  const all=appData.tasks.filter(t=>t.status!=="cancelled");
-  const produced = all.filter(t=>t.producedAt && vietnamDay(t.producedAt)>=start && vietnamDay(t.producedAt)<end);
-  const pubs = all.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt && vietnamDay(p.publishedAt)>=start && vietnamDay(p.publishedAt)<end);
-  const targets = targetForWeek(start);
-  return channels.map(channel => {
-    const p=produced.filter(t=>t.channel===channel).length;
-    const x=pubs.filter(pub=>pub.channel===channel).length;
-    return {channel,produced:p,published:x,produceTarget:Math.max(0,Number(targets[channel]?.produce)||0),publishTarget:Math.max(0,Number(targets[channel]?.publish)||0)};
-  });
+  const assigned=appData.tasks.filter(t=>t.status!=="cancelled"&&taskAssignee(t)===email);
+  const produced=assigned.filter(t=>t.producedAt&&vietnamDay(t.producedAt)>=start&&vietnamDay(t.producedAt)<end);
+  const pubs=assigned.flatMap(t=>(Array.isArray(t.publications)?t.publications:[]).map(p=>({...p,taskId:t.id}))).filter(p=>p.publishedAt&&vietnamDay(p.publishedAt)>=start&&vietnamDay(p.publishedAt)<end);
+  const targets=targetForWeek(start,email);
+  return channels.map(channel=>({
+    channel,
+    produced:produced.filter(t=>t.channel===channel).length,
+    published:pubs.filter(p=>p.channel===channel).length,
+    produceTarget:Math.max(0,Number(targets[channel]?.produce)||0),
+    publishTarget:Math.max(0,Number(targets[channel]?.publish)||0)
+  }));
 }
 function kpiCard(k) {
   const bar=(value,target)=>`<div class="progress"><i class="${target&&value>=target?"ok":""}" style="width:${target?Math.min(100,value/target*100):0}%"></i></div>`;
@@ -629,24 +631,33 @@ async function saveSchedule(form) {
   if(ok){await logAction("schedule:"+date,"schedule_saved",mode+" · "+(mode==="off"?"Nghỉ":start+"–"+end));closeModal();}
 }
 
-function targetForWeek(start) {
+function targetForWeek(start,email=selectedEmployee()) {
   const history=appData.kpi?.history||[];
-  const prior=history.filter(h=>h.fromWeek<=start).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
-  return prior.length?prior[prior.length-1].targets:history.length?{}:appData.kpi?.targets||{};
+  const entries=history.filter(h=>h.fromWeek<=start && (h.employeeEmail===email || (!h.employeeEmail&&email===staffEmails[0]))).sort((a,b)=>a.fromWeek.localeCompare(b.fromWeek));
+  if(entries.length)return entries[entries.length-1].targets||{};
+  if(history.length)return {};
+  if(appData.kpi?.staffTargets?.[email])return appData.kpi.staffTargets[email];
+  return email===staffEmails[0]?appData.kpi?.targets||{}:{};
 }
 function kpiWeekView() {
-  return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div></div>`;
+  return `<div class="toolbar"><div class="button-row">${btn("‹ Tuần trước","week-prev")}<strong>${fmt(ui.week)} – ${fmt(addDays(ui.week,6))}</strong>${btn("Tuần sau ›","week-next")}${btn("Tuần này","week-now")}</div>
+    ${manager()?`<select id="kpiEmployeeSelect" aria-label="Chọn nhân viên để xem KPI">${employeeOptions().map(([email,label])=>`<option value="${safe(email)}" ${ui.kpiEmployee===email?"selected":""}>${safe(label)}</option>`).join("")}</select>`:""}</div>`;
 }
-function reportId(start) {return "WR-"+start;}
-function weeklyReport(start) {return appData.reports.find(r=>r.id===reportId(start));}
-function employeeNote(start) {return appData.notes.find(n=>n.id===start+"_"+(staff()?me.uid:n.ownerUid));}
+function reportId(start,email=selectedEmployee()) {return "WR-"+start+"-"+email;}
+function weeklyReport(start,email=selectedEmployee()) {
+  return appData.reports.find(r=>r.id===reportId(start,email)) ||
+    (email===staffEmails[0]?appData.reports.find(r=>r.id==="WR-"+start):null);
+}
+function employeeNote(start,email=selectedEmployee()) {
+  return appData.notes.find(n=>n.week===start&&n.ownerEmail===email);
+}
 function renderKpi() {
   const stats=weekStats(ui.week),report=weeklyReport(ui.week),latest=(report?.versions||[]).slice(-1)[0];
   const current=JSON.stringify(stats);
   const changed=latest && JSON.stringify(latest.metrics)!==current;
-  const note=appData.notes.find(n=>n.week===ui.week);
-  const metrics=appData.tasks.filter(t=>t.status!=="cancelled"&&t.due>=ui.week&&t.due<addDays(ui.week,7));
-  return `<div class="stack">${kpiWeekView()}
+  const note=employeeNote(ui.week);
+  const metrics=appData.tasks.filter(t=>t.status!=="cancelled"&&taskAssignee(t)===selectedEmployee()&&t.due>=ui.week&&t.due<addDays(ui.week,7));
+  return `<div class="stack">${kpiWeekView()}<p class="sub">Đang xem kết quả của <b>${safe(staffLabel(selectedEmployee()))}</b> · ${safe(selectedEmployee())}</p>
     <div class="grid cols3">${stats.map(kpiCard).join("")}</div>
     <section class="card"><div class="section-head"><h2>Tổng hợp công việc theo tuần</h2>${pill(metrics.length+" việc có deadline")}</div>
       <div class="grid cols3">${metric("Hoàn thành",metrics.filter(t=>t.status==="done").length,"Theo deadline tuần")}${metric("Chưa hoàn thành",metrics.filter(t=>t.status!=="done").length,"Cần theo dõi")}${metric("Chờ duyệt",metrics.filter(t=>t.status==="review").length,"Chưa phản ánh KPI xuất bản")}</div>
@@ -679,9 +690,9 @@ async function saveWeeklyNote(form) {
 }
 function openWeeklyConfirm(week) {
   if(!manager())return;
-  const report=weeklyReport(week),latest=(report?.versions||[]).slice(-1)[0];
+  const report=weeklyReport(week,selectedEmployee()),latest=(report?.versions||[]).slice(-1)[0];
   const changed=latest&&JSON.stringify(latest.metrics)!==JSON.stringify(weekStats(week));
-  modal(latest?"Xác nhận điều chỉnh báo cáo":"Xác nhận báo cáo KPI",`<form id="weeklyConfirmForm" data-week="${safe(week)}" class="stack">
+  modal(latest?"Xác nhận điều chỉnh báo cáo":"Xác nhận báo cáo KPI",`<form id="weeklyConfirmForm" data-week="${safe(week)}" data-employee="${safe(selectedEmployee())}" class="stack">
     <div class="notice ${changed?"warn":""}">Kỳ ${fmt(week)}–${fmt(addDays(week,6))}. ${latest?changed?"Có thay đổi số liệu so với bản chốt trước.":"Số liệu chưa thay đổi; chỉ chốt bản mới khi có lý do.":"Chưa có bản chốt."}</div>
     ${txtarea("managerComment","Nhận xét của Giám đốc",latest?.managerComment||"")}
     ${txtarea("reason","Lý do xác nhận / điều chỉnh",latest?"":"Chốt đánh giá tuần")}
@@ -690,14 +701,16 @@ function openWeeklyConfirm(week) {
 async function confirmWeekly(form) {
   if(!manager())return;
   const week=form.dataset.week;
-  const ref=doc(db,collectionNames.reports,reportId(week));
+  const email=form.dataset.employee;
+  if(!staffEmails.includes(email))return toast("Tài khoản nhân viên không hợp lệ.");
+  const ref=doc(db,collectionNames.reports,reportId(week,email));
   const reason=trim(form.elements.reason.value,1200);
   if(!reason)return toast("Vui lòng nhập lý do để lưu lịch sử.");
-  const metrics=weekStats(week);
-  const report=weeklyReport(week),old=report?.versions||[];
+  const metrics=weekStats(week,email);
+  const report=weeklyReport(week,email),old=report?.versions||[];
   if(old.length>=50)return toast("Báo cáo đã có quá nhiều phiên bản. Cần lưu trữ phiên bản cũ.");
   const version={metrics,reason,managerComment:trim(form.elements.managerComment.value,4000),confirmedAt:iso(),confirmedBy:me.uid};
-  const payload={week,versions:[...old,version],updatedAt:iso(),updatedBy:me.uid};
+  const payload={week,employeeEmail:email,versions:[...old,version],updatedAt:iso(),updatedBy:me.uid};
   const ok=await doWrite(()=>setDoc(ref,payload),"Đã chốt báo cáo phiên bản V"+(old.length+1)+".");
   if(ok)closeModal();
 }
