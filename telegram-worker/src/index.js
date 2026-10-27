@@ -339,7 +339,7 @@ async function handleAuthed(request, env, path) {
   if (path === "/api/configure-webhook" && request.method === "POST") {
     if (!user.manager) return json({error:"Only director can configure webhook"},403);
     const workerUrl = String(env.PUBLIC_WORKER_URL || "");
-    if (!/^https:\/\/[a-zA-Z0-9.-]+\.workers\.dev$/.test(workerUrl) || !env.TELEGRAM_WEBHOOK_SECRET || !env.BOT_TOKEN) return json({error:"Missing Worker URL or bot secrets"},409);
+    if (!/^https:\/\/[a-zA-Z0-9.-]+\.workers\.dev$/.test(workerUrl) || !env.TELEGRAM_WEBHOOK_SECRET || !env.BOT_TOKEN) return json({error:"Cấu hình webhook chưa đầy đủ. Vui lòng kiểm tra PUBLIC_WORKER_URL, BOT_TOKEN và TELEGRAM_WEBHOOK_SECRET đang ở Production. Không chia sẻ giá trị Secret."},409);
     await botApi(env, "setWebhook", {url:workerUrl+"/telegram/webhook",secret_token:env.TELEGRAM_WEBHOOK_SECRET,allowed_updates:["message"],drop_pending_updates:true});
     return json({ok:true,message:"Telegram webhook configured"});
   }
