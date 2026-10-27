@@ -185,7 +185,7 @@ function renderDashboard() {
   const due=tasks.filter(t=>t.status!=="done"&&t.due<=addDays(today(),2)).sort((a,b)=>(a.due||"").localeCompare(b.due||"")).slice(0,8);
   const review=tasks.filter(t=>t.status==="review");
   const questions=waitingQuestions();
-  const week=weekStats(nowWeek());
+  const week=manager()?staffEmails.map(email=>({email,rows:weekStats(nowWeek(),email)})):[{email:me.email,rows:weekStats(nowWeek(),me.email)}];
   const total=tasks.length;
   const metrics=manager() ?
     [metric("Chờ duyệt",review.length,"Sản phẩm chờ kiểm tra"),metric("Cần phản hồi",questions.length,"Câu hỏi về công việc"),metric("Việc quá hạn",tasks.filter(isLate).length,"Cần theo dõi"),metric("Công việc đã hoàn thành",tasks.filter(t=>t.status==="done").length,`${total} công việc`)]:
@@ -194,7 +194,8 @@ function renderDashboard() {
     <div class="split"><section class="card"><div class="section-head"><h2>${manager()?"Cần tôi xử lý":"Việc cần ưu tiên"}</h2>${btn("Xem tất cả","go",manager()?"inbox":"tasks")}</div>
       ${manager()?(review.length?review.map(taskLine).join(""):"")+questions.map(taskLine).join("")||empty("Không có yêu cầu đang chờ.") : due.length?due.map(taskLine).join(""):empty("Chưa có việc cần ưu tiên.")}
     </section><section class="card"><div class="section-head"><h2>KPI tuần này</h2>${btn("Chi tiết","go","kpi")}</div>
-      ${week.map(k=>`<div class="kpi-row"><div class="header"><b>${k.channel}</b><span>SX ${k.produced}/${k.produceTarget||"—"} · Đăng ${k.published}/${k.publishTarget||"—"}</span></div></div>`).join("")}
+      ${week.map(person=>`<div class="kpi-row"><div class="header"><b>${safe(staffLabel(person.email))}</b><span>${safe(person.email)}</span></div>
+   ${person.rows.map(k=>`<div class="header" style="padding:4px 0"><span>${safe(k.channel)}</span><span>SX ${k.produced}/${k.produceTarget||"—"} · Đăng ${k.published}/${k.publishTarget||"—"}</span></div>`).join("")}</div>`).join("")}
       <div class="notice">KPI ghi nhận theo số lượng sản phẩm và lượt đăng thực tế, tách riêng từng kênh.</div>
     </section></div>
     <section class="card"><div class="section-head"><h2>Hành động nhanh</h2></div><div class="button-row">${btn(manager()?"＋ Giao việc":"＋ Tự tạo việc","new-task","","primary")}${btn("Lập kế hoạch","go","plans")}${btn("Lịch Marketing","go","calendar")}${manager()?btn("Thiết lập KPI","go","settings"):""}</div></section>
@@ -272,6 +273,7 @@ async function saveTaskForm(form) {
     newTask.producedAt="";newTask.publications=[];
   }
   if(old){
+    if(manager() && old.assigneeEmail && old.assigneeEmail!==newTask.assigneeEmail && (old.producedAt || (old.publications||[]).length || old.status==="done")) return toast("Không chuyển người phụ trách sau khi đã ghi nhận sản lượng. Hãy tạo công việc mới cho người nhận.");
     const changedCore=old.title!==newTask.title||old.description!==newTask.description||old.category!==newTask.category||old.channel!==newTask.channel;
     if(changedCore&&needsReview({...old,...newTask})){newTask.reviewRequired=true;newTask.approvalState="pending";}
   }
