@@ -539,44 +539,69 @@ async function pausePlan(key) {
   const ok=await doWrite(()=>updateDoc(doc(db,collectionNames.plans,key),{active:false,updatedAt:iso()}),"Đã tạm dừng kế hoạch. Những việc đã tạo vẫn giữ nguyên.");
   if(ok){await logAction(p.id,"plan_paused","Kế hoạch đã tạm dừng");closeModal();}
 }
+const scheduleModeNames={office:"Văn phòng",remote:"Làm từ xa",field:"Đi quay / sự kiện",off:"Nghỉ"};
+function scheduleChip(s,date) {
+  const name=scheduleModeNames[s.mode]||"Lịch làm";
+  const hours=s.mode==="off"?"Cả ngày":(s.start&&s.end?s.start+"–"+s.end:s.start||"Chưa có giờ");
+  const detail=[name,hours,s.note||""].filter(Boolean).join(" · ");
+  return `<button type="button" class="cal-chip work ${s.mode==="off"?"work-off":""}" title="${safe(fmt(date)+" · "+detail)}" data-action="schedule" data-id="${safe(date)}" aria-label="${safe(detail)}"><span class="schedule-mode">${safe(name)}</span><span class="schedule-hours">${safe(hours)}</span></button>`;
+}
 function renderCalendar() {
   const [year,month]=ui.month.split("-").map(Number);
-  const start=(new Date(year,month-1,1).getDay()+6)%7;
-  const count=Math.ceil((new Date(year,month,0).getDate()+start)/7)*7;
+  const offset=(new Date(year,month-1,1).getDay()+6)%7;
+  const days=new Date(year,month,0).getDate();
+  const count=Math.ceil((days+offset)/7)*7;
   const layers=ui.layers;
   let html=["T2","T3","T4","T5","T6","T7","CN"].map(x=>`<div class="weekday">${x}</div>`).join("");
   for(let i=0;i<count;i++){
-    const date=today(new Date(year,month-1,i-start+1));
+    const date=today(new Date(year,month-1,i-offset+1,12));
     const inside=date.slice(0,7)===ui.month;
-    let entries=[];
-    if(layers.post)entries.push(...appData.tasks.filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe(t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`));
-    if(layers.due)entries.push(...appData.tasks.filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe(t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`));
-    if(layers.work)entries.push(...appData.schedules.filter(s=>s.date===date).map(s=>`<button class="cal-chip work" data-action="schedule" data-id="${safe(date)}">${safe(s.mode==="off"?"Nghỉ":s.mode==="office"?"Văn phòng":s.mode==="remote"?"Từ xa":"Đi quay")} ${safe(s.start||"")}</button>`));
-    html+=`<div class="day ${inside?"":"out"}"><span class="number">${dateFrom(date).getDate()}</span>
-       ${entries.slice(0,4).join("")}${entries.length>4?`<div class="tag">+${entries.length-4} sự kiện</div>`:""}
-       ${staff()&&inside?`<button class="cal-chip work" data-action="schedule" data-id="${safe(date)}">＋ Lịch làm</button>`:""}
+    const schedules=layers.work?appData.schedules.filter(x=>x.date===date):[];
+    const entries=[
+      ...schedules.map(x=>scheduleChip(x,date)),
+      ...(layers.due?appData.tasks.filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe("Hạn "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`):[]),
+      ...(layers.post?appData.tasks.filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe("Dự kiến đăng "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`):[])
+    ];
+    const hasMySchedule=appData.schedules.some(s=>s.date===date&&s.ownerUid===me.uid);
+    html+=`<div class="day ${inside?"":"out"} ${date===today()?"today":""}"><span class="number">${dateFrom(date).getDate()}</span>
+       ${entries.slice(0,4).join("")}${entries.length>4?`<div class="tag">+${entries.length-4} sự kiện khác</div>`:""}
+       ${staff()&&inside&&layers.work&&!hasMySchedule?`<button class="cal-chip add-work" data-action="schedule" data-id="${safe(date)}">＋ Đăng ký lịch</button>`:""}
        </div>`;
   }
   const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>appData.tasks.filter(t=>t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
-  return `<div class="toolbar"><p class="sub">Bật/tắt lớp lịch. Nhân viên tự đăng ký lịch làm, không cần duyệt và không tự dời deadline.</p>${staff()?btn("＋ Đăng ký lịch làm","schedule",today(),"primary"):""}</div>
+  return `<div class="toolbar"><p class="sub">Lịch làm hiển thị đầy đủ giờ bắt đầu–kết thúc và nằm riêng với lịch đăng, deadline. Nhân viên có thể thay đổi lịch làm bất cứ lúc nào.</p>${staff()?btn("＋ Đăng ký lịch làm","schedule",today(),"primary"):""}</div>
     <section class="card"><div class="toolbar"><div class="button-row">${btn("‹","cal-prev")}<strong>Tháng ${month}/${year}</strong>${btn("›","cal-next")}${btn("Hôm nay","cal-today")}</div>
     <div class="checkbox-row">${[["work","Lịch làm"],["due","Deadline"],["post","Lịch đăng"]].map(([k,label])=>`<label><input type="checkbox" data-layer="${k}" ${layers[k]?"checked":""}>${label}</label>`).join("")}</div></div>
     <div class="calendar">${html}</div></section>
     ${conflicts.length?`<div class="notice warn" style="margin-top:16px"><b>Cảnh báo xung đột lịch:</b>${conflicts.map(x=>`<div>${fmt(x.date)} – ${taskName(x.task)}</div>`).join("")}</div>`:""}
   `;
 }
+function setScheduleTimeVisibility(form) {
+  if(!form)return;
+  const off=form.elements.mode?.value==="off";
+  form.querySelectorAll(".schedule-time-field").forEach(x=>x.classList.toggle("hidden",off));
+}
 function openSchedule(date=today()) {
-  if(!staff())return toast("Nhân viên tự đăng ký lịch đi làm.");
-  const cur=appData.schedules.find(s=>s.id===me.uid+"_"+date);
-  modal("Đăng ký lịch làm việc",`<form id="scheduleForm" class="form-grid">
-    ${field("date","Ngày *",date,"date","required")}
-    ${select("mode","Hình thức",[["office","Tại văn phòng"],["remote","Làm từ xa"],["field","Đi quay / Sự kiện"],["off","Nghỉ"]],cur?.mode||"office")}
-    ${field("start","Giờ bắt đầu",cur?.start||"08:30","time")}
-    ${field("end","Giờ kết thúc",cur?.end||"17:30","time")}
-    <div class="full">${txtarea("note","Ghi chú",cur?.note||"")}</div>
-    <div class="full notice">Lịch có hiệu lực ngay, không cần Giám đốc phê duyệt. Nếu trùng deadline, hệ thống cảnh báo nhưng không tự thay đổi công việc.</div>
-    <div class="full button-row end"><button type="submit" class="btn primary">Lưu lịch làm</button></div>
+  const selected=cleanDate(date)||today();
+  const own=appData.schedules.find(s=>s.id===me.uid+"_"+selected);
+  if(manager()){
+    const records=appData.schedules.filter(s=>s.date===selected);
+    return modal("Lịch làm · "+fmt(selected),`<div class="stack"><p class="sub">Lịch do nhân viên tự đăng ký; Giám đốc chỉ xem, không cần phê duyệt.</p>
+      ${records.map(s=>`<div class="list-card"><strong>${safe(s.ownerEmail||"Nhân viên")}</strong><p>${safe(scheduleModeNames[s.mode]||"Lịch làm")} · ${safe(s.mode==="off"?"Cả ngày":s.start+"–"+s.end)}</p><p>${safe(s.note||"")}</p></div>`).join("")||empty("Chưa có lịch làm cho ngày này.")}</div>`);
+  }
+  if(!staff())return toast("Chỉ nhân viên được đăng ký lịch làm.");
+  const isEdit=!!own;
+  modal(isEdit?"Điều chỉnh lịch làm · "+fmt(selected):"Đăng ký lịch làm · "+fmt(selected),`<form id="scheduleForm" class="form-grid">
+    ${field("date","Ngày *",selected,"date",isEdit?"disabled":"required")}
+    ${select("mode","Hình thức",[["office","Tại văn phòng"],["remote","Làm từ xa"],["field","Đi quay / sự kiện"],["off","Nghỉ"]],own?.mode||"office")}
+    <div class="schedule-time-field">${field("start","Giờ bắt đầu",own?.start||"08:30","time","required")}</div>
+    <div class="schedule-time-field">${field("end","Giờ kết thúc",own?.end||"17:30","time","required")}</div>
+    <div class="full">${txtarea("note","Ghi chú",own?.note||"")}</div>
+    <div class="full notice">Ca làm được hiển thị theo khoảng giờ (ví dụ 08:30–12:30). Nếu chọn Nghỉ, không cần nhập giờ. Thay đổi lịch không tự dời deadline.</div>
+    ${isEdit?'<div class="full sub">Muốn đăng ký sang ngày khác, hãy chọn đúng ngày đó trên lịch.</div>':""}
+    <div class="full button-row end"><button type="submit" class="btn primary">${isEdit?"Lưu thay đổi":"Lưu lịch làm"}</button></div>
     </form>`);
+  setScheduleTimeVisibility($("scheduleForm"));
 }
 async function saveSchedule(form) {
   if(!staff())return;
@@ -586,7 +611,7 @@ async function saveSchedule(form) {
   if(mode!=="off"&&(!/^\d\d:\d\d$/.test(start)||!/^\d\d:\d\d$/.test(end)||end<=start))return toast("Giờ làm việc không hợp lệ.");
   const data={ownerUid:me.uid,ownerEmail:me.email,date,mode,start:mode==="off"?"":start,end:mode==="off"?"":end,note:trim(form.elements.note.value),updatedAt:iso()};
   const ok=await doWrite(()=>setDoc(doc(db,collectionNames.schedules,me.uid+"_"+date),data),"Đã lưu lịch đi làm.");
-  if(ok){await logAction("schedule:"+date,"schedule_saved",mode+" "+start+"-"+end);closeModal();}
+  if(ok){await logAction("schedule:"+date,"schedule_saved",mode+" · "+(mode==="off"?"Nghỉ":start+"–"+end));closeModal();}
 }
 
 function targetForWeek(start) {
@@ -758,6 +783,7 @@ document.addEventListener("input",e=>{
   }
 });
 document.addEventListener("change",e=>{
+  if(e.target.name==="mode"&&e.target.closest("#scheduleForm")) setScheduleTimeVisibility(e.target.form);
   if(e.target.name==="type"&&e.target.closest("#planForm")){
     const form=e.target.form;
     form.elements.end.value=e.target.value==="recurring"?addDays(form.elements.start.value||today(),365):addDays(form.elements.start.value||today(),6);
