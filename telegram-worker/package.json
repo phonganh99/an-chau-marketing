@@ -1,0 +1,15 @@
+{
+  "name": "an-chau-telegram-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate": "wrangler d1 migrations apply an-chau-telegram --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
