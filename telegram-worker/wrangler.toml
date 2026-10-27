@@ -10,7 +10,7 @@ STAFF_EMAILS = "phongspotify00@gmail.com,hathu0374@gmail.com"
 APP_ORIGIN = "https://phonganh99.github.io"
 APP_URL = "https://phonganh99.github.io/an-chau-marketing/v3.html"
 BOT_USERNAME = "Report_mkt_bot"
-PUBLIC_WORKER_URL = "https://REPLACE_WITH_WORKER_SUBDOMAIN.workers.dev"
+PUBLIC_WORKER_URL = "https://an-chau-telegram.phonganh99.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
