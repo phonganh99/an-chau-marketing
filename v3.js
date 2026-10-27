@@ -553,8 +553,9 @@ const scheduleModeNames={office:"Văn phòng",remote:"Làm từ xa",field:"Đi q
 function scheduleChip(s,date) {
   const name=scheduleModeNames[s.mode]||"Lịch làm";
   const hours=s.mode==="off"?"Cả ngày":(s.start&&s.end?s.start+"–"+s.end:s.start||"Chưa có giờ");
-  const detail=[name,hours,s.note||""].filter(Boolean).join(" · ");
-  return `<button type="button" class="cal-chip work ${s.mode==="off"?"work-off":""}" title="${safe(fmt(date)+" · "+detail)}" data-action="schedule" data-id="${safe(date)}" aria-label="${safe(detail)}"><span class="schedule-mode">${safe(name)}</span><span class="schedule-hours">${safe(hours)}</span></button>`;
+  const person=staffLabel(s.ownerEmail||"");
+  const detail=[person,name,hours,s.note||""].filter(Boolean).join(" · ");
+  return `<button type="button" class="cal-chip work ${s.mode==="off"?"work-off":""}" title="${safe(fmt(date)+" · "+detail)}" data-action="schedule" data-id="${safe(date)}" aria-label="${safe(detail)}"><span class="schedule-mode">${safe(person)} · ${safe(name)}</span><span class="schedule-hours">${safe(hours)}</span></button>`;
 }
 function renderCalendar() {
   const [year,month]=ui.month.split("-").map(Number);
@@ -569,8 +570,8 @@ function renderCalendar() {
     const schedules=layers.work?appData.schedules.filter(x=>x.date===date):[];
     const entries=[
       ...schedules.map(x=>scheduleChip(x,date)),
-      ...(layers.due?appData.tasks.filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe("Hạn "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`):[]),
-      ...(layers.post?appData.tasks.filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe("Dự kiến đăng "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`):[])
+      ...(layers.due?myTasks().filter(t=>t.due===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip due" title="${safe("Hạn "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Hạn · ${safe(t.title)}</button>`):[]),
+      ...(layers.post?myTasks().filter(t=>t.publish===date&&t.status!=="cancelled").map(t=>`<button class="cal-chip" title="${safe("Dự kiến đăng "+fmt(date)+" · "+t.title)}" data-action="task" data-id="${safe(t.id)}">Đăng · ${safe(t.title)}</button>`):[])
     ];
     const hasMySchedule=appData.schedules.some(s=>s.date===date&&s.ownerUid===me.uid);
     html+=`<div class="day ${inside?"":"out"} ${date===today()?"today":""}"><span class="number">${dateFrom(date).getDate()}</span>
@@ -578,7 +579,7 @@ function renderCalendar() {
        ${staff()&&inside&&layers.work&&!hasMySchedule?`<button class="cal-chip add-work" data-action="schedule" data-id="${safe(date)}">＋ Đăng ký lịch</button>`:""}
        </div>`;
   }
-  const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>appData.tasks.filter(t=>t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
+  const conflicts=appData.schedules.filter(s=>s.mode==="off").flatMap(s=>myTasks().filter(t=>taskAssignee(t)===(s.ownerEmail||"").toLowerCase()&&t.due===s.date&&t.status!=="done"&&t.status!=="cancelled").map(t=>({date:s.date,task:t}))).slice(0,10);
   return `<div class="toolbar"><p class="sub">Lịch làm hiển thị đầy đủ giờ bắt đầu–kết thúc và nằm riêng với lịch đăng, deadline. Nhân viên có thể thay đổi lịch làm bất cứ lúc nào.</p>${staff()?btn("＋ Đăng ký lịch làm","schedule",today(),"primary"):""}</div>
     <section class="card"><div class="toolbar"><div class="button-row">${btn("‹","cal-prev")}<strong>Tháng ${month}/${year}</strong>${btn("›","cal-next")}${btn("Hôm nay","cal-today")}</div>
     <div class="checkbox-row">${[["work","Lịch làm"],["due","Deadline"],["post","Lịch đăng"]].map(([k,label])=>`<label><input type="checkbox" data-layer="${k}" ${layers[k]?"checked":""}>${label}</label>`).join("")}</div></div>
@@ -601,7 +602,7 @@ function openSchedule(date=today()) {
   if(manager()){
     const records=appData.schedules.filter(s=>s.date===selected);
     return modal("Lịch làm · "+fmt(selected),`<div class="stack"><p class="sub">Lịch do nhân viên tự đăng ký; Giám đốc chỉ xem, không cần phê duyệt.</p>
-      ${records.map(s=>`<div class="list-card"><strong>${safe(s.ownerEmail||"Nhân viên")}</strong><p>${safe(scheduleModeNames[s.mode]||"Lịch làm")} · ${safe(s.mode==="off"?"Cả ngày":s.start+"–"+s.end)}</p><p>${safe(s.note||"")}</p></div>`).join("")||empty("Chưa có lịch làm cho ngày này.")}</div>`);
+      ${records.map(s=>`<div class="list-card"><strong>${safe(s.ownerEmail||"Nhân viên")}</strong><p>${safe(staffLabel(s.ownerEmail))} · ${safe(scheduleModeNames[s.mode]||"Lịch làm")} · ${safe(s.mode==="off"?"Cả ngày":s.start+"–"+s.end)}</p><p>${safe(s.note||"")}</p></div>`).join("")||empty("Chưa có lịch làm cho ngày này.")}</div>`);
   }
   if(!staff())return toast("Chỉ nhân viên được đăng ký lịch làm.");
   const isEdit=!!own;
