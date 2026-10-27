@@ -7,5 +7,7 @@ window.ANCHAU_CONFIG = {
   messagingSenderId: '962007907238',
   managerEmail: 'phonganh99@gmail.com',
   staffEmail: 'phongspotify00@gmail.com',
-  staffEmails: ['phongspotify00@gmail.com', 'hathu0374@gmail.com']
+  staffEmails: ['phongspotify00@gmail.com', 'hathu0374@gmail.com'],
+  // Worker public endpoint (not a secret). Set after deploying on Cloudflare:
+  telegramWorkerUrl: ''
 };
