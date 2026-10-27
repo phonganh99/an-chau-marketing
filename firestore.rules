@@ -1,0 +1,139 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isManager() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email == 'phonganh99@gmail.com';
+    }
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email in ['phongspotify00@gmail.com', 'hathu0374@gmail.com'];
+    }
+    function assignedToMe() {
+      return resource.data.get('assigneeEmail','phongspotify00@gmail.com') == request.auth.token.email;
+    }
+    function member() {
+      return isManager() || isStaff();
+    }
+    function staffCreatesTask() {
+      return request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.source in ['self', 'plan']
+        && request.resource.data.assigneeEmail == request.auth.token.email
+        && request.resource.data.createdByEmail == request.auth.token.email
+        && request.resource.data.status == 'todo'
+        && request.resource.data.approvalState in ['pending', 'not_required']
+        && request.resource.data.reviewRequired is bool
+        && request.resource.data.producedAt == ''
+        && request.resource.data.publications is list
+        && request.resource.data.publications.size() == 0;
+    }
+    function staffTaskChanges() {
+      let changing = request.resource.data.diff(resource.data).affectedKeys();
+      let safeCommon = [
+        'status','result','link','producedAt','publishedAt','publications',
+        'updatedAt','updatedBy','approvalState','completedAt'
+      ];
+      let selfOnly = [
+        'title','owner','category','channel','priority','due','publish','description','reviewRequired'
+      ];
+      let ownsTask = resource.data.get('createdBy','') == request.auth.uid
+        && resource.data.get('source','') == 'self';
+      let pubsOld = resource.data.get('publications',[]);
+      let pubsNew = request.resource.data.get('publications',[]);
+      let publishing = pubsNew != pubsOld;
+      let approved = resource.data.get('approvalState','') == 'approved'
+        || resource.data.get('reviewRequired',false) == false;
+      return assignedToMe()
+        && request.resource.data.updatedBy == request.auth.uid
+        && resource.data.get('status','') != 'cancelled'
+        && (resource.data.get('status','') != 'done'
+            || (publishing
+                && request.resource.data.status == 'done'
+                && changing.hasOnly(['publications','publishedAt','link','status','updatedAt','updatedBy'])))
+        && (changing.hasOnly(safeCommon)
+             || (ownsTask && changing.hasOnly(safeCommon.concat(selfOnly))))
+        && request.resource.data.get('source','assigned') == resource.data.get('source','assigned')
+        && request.resource.data.get('createdBy','') == resource.data.get('createdBy','')
+        && (request.resource.data.get('reviewRequired',false) == resource.data.get('reviewRequired',false)
+             || (ownsTask && request.resource.data.get('reviewRequired',false) == true))
+        && (request.resource.data.get('approvalState','') == resource.data.get('approvalState','')
+             || request.resource.data.get('approvalState','') == 'pending')
+        && request.resource.data.status in ['todo','doing','review','done']
+        && (request.resource.data.status != 'done'
+             || resource.data.get('category','') == 'Khác'
+             || resource.data.get('channel','') == 'Nội bộ'
+             || publishing)
+        && (!publishing || (approved && pubsNew.size() == pubsOld.size() + 1))
+        && pubsNew is list;
+    }
+
+    match /marketingTasks/{taskId} {
+      allow read: if member();
+      allow create: if isManager() || (isStaff() && staffCreatesTask());
+      allow update: if isManager() || (isStaff() && staffTaskChanges());
+      allow delete: if isManager();
+    }
+
+    match /marketingPlans/{planId} {
+      allow read: if member();
+      allow create: if isStaff()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == request.auth.token.email
+        && request.resource.data.active == false;
+      allow update: if isManager() || (isStaff()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.ownerEmail == resource.data.ownerEmail);
+      allow delete: if false;
+    }
+    match /marketingSchedules/{scheduleId} {
+      allow read: if member();
+      allow create: if isManager() || (isStaff()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == request.auth.token.email);
+      allow update: if isManager() || (isStaff()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid);
+      allow delete: if false;
+    }
+    match /marketingKpiTargets/{targetId} {
+      allow read: if member();
+      allow write: if isManager();
+    }
+    match /marketingWeeklyReports/{reportId} {
+      allow read: if member();
+      allow write: if isManager();
+    }
+    match /marketingWeeklyNotes/{noteId} {
+      allow read: if member();
+      allow create: if isStaff() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isStaff()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if false;
+    }
+    match /marketingTaskMessages/{messageId} {
+      allow read: if member();
+      allow create: if member()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actorEmail == request.auth.token.email
+        && request.resource.data.kind in (isManager()
+          ? ['reply','feedback'] : ['question','feedback']);
+      allow update, delete: if false;
+    }
+    match /marketingEvents/{eventId} {
+      allow read: if member();
+      allow create: if member()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actorEmail == request.auth.token.email;
+      allow update, delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
