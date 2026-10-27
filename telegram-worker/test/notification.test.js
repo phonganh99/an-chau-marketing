@@ -38,6 +38,17 @@ test("each event targets only the correct recipient",()=>{
   assert.equal(eventNotification(env,{type:"revise-task"},task).email,"hathu0374@gmail.com");
   assert.equal(eventNotification(env,{type:"task_updated"},task),null);
 });
+test("staff acceptance notifies only director for assigned tasks",()=>{
+  const acceptance=eventNotification(env,{type:"accept-task",actorEmail:"hathu0374@gmail.com"},task);
+  assert.equal(acceptance.email,"phonganh99@gmail.com");
+  assert.match(acceptance.text,/Nhân viên đã nhận việc/);
+  assert.match(acceptance.text,/Nhân viên 2 \(Hà Thu\)/);
+  assert.match(acceptance.text,/Video du học/);
+  assert.match(acceptance.text,/2026-10-29/);
+  assert.ok(acceptance.text.endsWith("#task=MK-abc"));
+  assert.equal(eventNotification(env,{type:"accept-task",actorEmail:"phongspotify00@gmail.com"},task),null);
+  assert.equal(eventNotification(env,{type:"accept-task",actorEmail:"hathu0374@gmail.com"},{...task,source:"self"}),null);
+});
 test("Telegram deep links point to one task",()=>{
   assert.ok(eventNotification(env,{type:"task_created"},task).text.endsWith("#task=MK-abc"));
 });
