@@ -39,6 +39,7 @@ const needsReview = (task) => {
 const appData = { tasks:[],plans:[],schedules:[],messages:[],events:[],reports:[],notes:[],kpi:null };
 const ui = {view:"dashboard",month:today().slice(0,7), week:weekStart(), filter:"", layers:{work:true,due:true,post:true}, planType:"week"};
 let auth,db,me=null,role=null,unsubs=[],toastTimer=null;
+const syncState = {};
 const managerEmail = trim(CONFIG.managerEmail).toLowerCase();
 const staffEmail = trim(CONFIG.staffEmail).toLowerCase();
 const manager = () => role === "manager";
@@ -76,21 +77,48 @@ async function logAction(taskId,type,detail="") {
 function unsubscribeAll() { unsubs.forEach(f=>f());unsubs=[]; }
 function subscriptions() {
   unsubscribeAll();
+  for(const key of Object.keys(collectionNames)) syncState[key]={status:"loading",code:""};
+  render();
   for(const [key,col] of Object.entries(collectionNames)) {
     if(key==="kpi") continue;
     const unsub = onSnapshot(collection(db,col), snapshot => {
       appData[key]=snapshot.docs.map(d=>({...d.data(),id:d.id}));
+      syncState[key]={status:"ready",code:""};
       render();
       if(key==="plans" && staff()) generateRecurring().catch(e=>console.warn("Lịch lặp:",e));
     },e=>{
       console.warn("Firestore",col,e);
+      syncState[key]={status:"error",code:e?.code||"unknown"};
+      render();
       toast("Không tải được "+col+": "+errorText(e));
     });
     unsubs.push(unsub);
   }
   unsubs.push(onSnapshot(doc(db,collectionNames.kpi,"weekly"),snapshot=>{
-    appData.kpi=snapshot.exists()?snapshot.data():null;render();
-  },e=>{console.warn("KPI",e);toast(errorText(e));}));
+    appData.kpi=snapshot.exists()?snapshot.data():null;
+    syncState.kpi={status:"ready",code:""};
+    render();
+  },e=>{
+    console.warn("KPI",e);
+    syncState.kpi={status:"error",code:e?.code||"unknown"};
+    render();
+    toast(errorText(e));
+  }));
+}
+function syncBanner() {
+  const taskState=syncState.tasks;
+  const failed=Object.entries(syncState).filter(([,v])=>v?.status==="error");
+  if(failed.length) {
+    const descriptions=failed.map(([key,v])=>key==="tasks"?"công việc ("+safe(v.code)+")":safe(collectionNames[key]||key)+" ("+safe(v.code)+")").join(", ");
+    const advice=staff()
+      ?"Nếu lỗi permission-denied, vào Firebase → Firestore Database → Rules và kiểm tra email nhân viên mới phongspotify00@gmail.com đã được Publish, sau đó thử tải lại."
+      :"Kiểm tra bộ phân quyền Firestore V3.0 đã Publish và tài khoản Google được cấp quyền.";
+    return '<div class="notice warn" role="alert" style="margin-bottom:16px;border-color:#e7b4b8;background:#fff1f1;color:#9e3043"><b>⚠ Không đồng bộ được từ Firestore.</b><p style="margin:7px 0">Lỗi: '+descriptions+'.</p><p style="margin:7px 0">'+advice+'</p>'+btn("Thử tải lại","retry-sync")+'</div>';
+  }
+  if(!taskState || taskState.status==="loading") {
+    return '<div class="notice" role="status" style="margin-bottom:16px">Đang tải danh sách công việc từ Firestore… Số liệu 0 bên dưới chưa phải kết quả cuối cùng.</div>';
+  }
+  return '<div class="sub" role="status" style="margin-bottom:14px">✓ Đã đồng bộ '+appData.tasks.length+' công việc từ Firestore.</div>';
 }
 function mountNav() {
   const pages = manager() ?
@@ -110,7 +138,7 @@ function render() {
   };
   $("pageTitle").textContent=titles[ui.view]||"Marketing";
   const renderers = {dashboard:renderDashboard,inbox:renderInbox,tasks:renderTasks,plans:renderPlans,calendar:renderCalendar,kpi:renderKpi,settings:renderSettings};
-  $("content").innerHTML=(renderers[ui.view]||renderDashboard)();
+  $("content").innerHTML=syncBanner()+(renderers[ui.view]||renderDashboard)();
 }
 function taskName(t) {return `<button class="task-title" data-action="task" data-id="${safe(t.id)}">${safe(t.title)}</button>`;}
 function taskLine(t) {
@@ -684,6 +712,7 @@ function backupCsv(){
 
 async function handleAction(action,key) {
   if(action==="go")return go(key);
+  if(action==="retry-sync")return subscriptions();
   if(action==="task")return openTaskDetail(key);
   if(action==="new-task")return openTaskForm();
   if(action==="edit-task"){closeModal();return openTaskForm(key);}
@@ -788,6 +817,7 @@ function initFirebase(){
     if(!user){
       me=null;role=null;
       for(const key of Object.keys(appData))appData[key]=key==="kpi"?null:[];
+      for(const key of Object.keys(syncState))delete syncState[key];
       $("app").classList.add("hidden");
       $("login").classList.remove("hidden");
       closeModal();return;
