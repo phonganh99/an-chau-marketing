@@ -11,7 +11,10 @@ service cloud.firestore {
       return request.auth != null
         && request.auth.token.email_verified == true
         && request.auth.token.firebase.sign_in_provider == 'google.com'
-        && request.auth.token.email == 'phongspotify00@gmail.com';
+        && request.auth.token.email in ['phongspotify00@gmail.com', 'hathu0374@gmail.com'];
+    }
+    function assignedToMe() {
+      return resource.data.get('assigneeEmail','phongspotify00@gmail.com') == request.auth.token.email;
     }
     function member() {
       return isManager() || isStaff();
@@ -19,7 +22,8 @@ service cloud.firestore {
     function staffCreatesTask() {
       return request.resource.data.createdBy == request.auth.uid
         && request.resource.data.source in ['self', 'plan']
-        && request.resource.data.owner == 'Nhân viên Marketing'
+        && request.resource.data.assigneeEmail == request.auth.token.email
+        && request.resource.data.createdByEmail == request.auth.token.email
         && request.resource.data.status == 'todo'
         && request.resource.data.approvalState in ['pending', 'not_required']
         && request.resource.data.reviewRequired is bool
@@ -43,7 +47,8 @@ service cloud.firestore {
       let publishing = pubsNew != pubsOld;
       let approved = resource.data.get('approvalState','') == 'approved'
         || resource.data.get('reviewRequired',false) == false;
-      return request.resource.data.updatedBy == request.auth.uid
+      return assignedToMe()
+        && request.resource.data.updatedBy == request.auth.uid
         && resource.data.get('status','') != 'cancelled'
         && (resource.data.get('status','') != 'done'
             || (publishing
@@ -77,6 +82,7 @@ service cloud.firestore {
       allow read: if member();
       allow create: if isStaff()
         && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == request.auth.token.email
         && request.resource.data.active == false;
       allow update: if isManager() || (isStaff()
         && resource.data.ownerUid == request.auth.uid
@@ -87,7 +93,8 @@ service cloud.firestore {
     match /marketingSchedules/{scheduleId} {
       allow read: if member();
       allow create: if isManager() || (isStaff()
-        && request.resource.data.ownerUid == request.auth.uid);
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == request.auth.token.email);
       allow update: if isManager() || (isStaff()
         && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == resource.data.ownerUid);
