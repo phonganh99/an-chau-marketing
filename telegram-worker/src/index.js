@@ -322,6 +322,18 @@ async function handleWebhook(env, request) {
 }
 async function handleAuthed(request, env, path) {
   const user = await verifiedUser(request, env);
+  if (path === "/api/diagnostics" && request.method === "GET") {
+    if (!user.manager) return json({error:"Forbidden"},403);
+    const workerUrl = String(env.PUBLIC_WORKER_URL || "").trim();
+    return json({checks:{
+      PUBLIC_WORKER_URL:/^https:\/\/[a-zA-Z0-9.-]+\.workers\.dev$/.test(workerUrl),
+      BOT_TOKEN:!!env.BOT_TOKEN,
+      TELEGRAM_WEBHOOK_SECRET:!!env.TELEGRAM_WEBHOOK_SECRET,
+      PAIRING_PEPPER:!!env.PAIRING_PEPPER,
+      GCP_SERVICE_ACCOUNT_JSON:!!env.GCP_SERVICE_ACCOUNT_JSON,
+      DB:!!env.DB
+    }});
+  }
   if (path === "/api/me" && request.method === "GET") {
     const linked = await linkEmail(env, user.email);
     return json({email:user.email,role:user.manager?"manager":"staff",connected:!!linked,botUsername:env.BOT_USERNAME});
